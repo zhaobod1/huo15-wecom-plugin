@@ -57,13 +57,28 @@ export async function wecomFetch(input: string | URL, init?: RequestInit, opts?:
 
   const initSignal = init?.signal ?? undefined;
   const signal = mergeAbortSignal({ signal: opts?.signal ?? initSignal, timeoutMs: opts?.timeoutMs });
+  
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has("User-Agent")) {
+    headers.set("User-Agent", "OpenClaw/2.0 (WeCom-Agent)");
+  }
+
   const nextInit: RequestInit & { dispatcher?: Dispatcher } = {
     ...(init ?? {}),
     ...(signal ? { signal } : {}),
     ...(dispatcher ? { dispatcher } : {}),
+    headers,
   };
 
-  return undiciFetch(input, nextInit as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+  try {
+    return await undiciFetch(input, nextInit as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "TypeError" && err.message === "fetch failed") {
+      const cause = (err as any).cause;
+      console.error(`[wecom-http] fetch failed: ${input} (proxy: ${proxyUrl || "none"})${cause ? ` - cause: ${String(cause)}` : ""}`);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -99,4 +114,3 @@ export async function readResponseBodyAsBuffer(res: Response, maxBytes?: number)
 
   return Buffer.concat(chunks.map((c) => Buffer.from(c)));
 }
-

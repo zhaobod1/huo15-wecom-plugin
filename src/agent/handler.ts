@@ -526,7 +526,7 @@ async function processAgentMessage(params: {
         SenderName: fromUser,
         SenderId: fromUser,
         Provider: "wecom",
-        Surface: "wecom",
+        Surface: "webchat",
         OriginatingChannel: "wecom",
         // 标记为 Agent 会话的回复路由目标，避免与 Bot 会话混淆：
         // - 用于让 /new /reset 这类命令回执不被 Bot 侧策略拦截
@@ -562,9 +562,9 @@ async function processAgentMessage(params: {
                     await sendText({ agent, toUser: fromUser, chatId: undefined, text });
                     log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser}`);
                 } catch (err: unknown) {
-                    error?.(`[wecom-agent] reply failed: ${String(err)}`);
-                }
-            },
+                    const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
+                    error?.(`[wecom-agent] reply failed: ${message}`);
+                }            },
             onError: (err: unknown, info: { kind: string }) => {
                 error?.(`[wecom-agent] ${info.kind} reply error: ${String(err)}`);
             },

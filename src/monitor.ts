@@ -437,6 +437,27 @@ async function sendBotFallbackPromptNow(params: { streamId: string; text: string
   });
 }
 
+async function pushFinalStreamReplyNow(streamId: string): Promise<void> {
+  const state = streamStore.getStream(streamId);
+  const responseUrl = getActiveReplyUrl(streamId);
+  if (!state || !responseUrl) return;
+  const finalReply = buildStreamReplyFromState(state) as unknown as Record<string, unknown>;
+  await useActiveReplyOnce(streamId, async ({ responseUrl, proxyUrl }) => {
+    const res = await wecomFetch(
+      responseUrl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalReply),
+      },
+      { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS },
+    );
+    if (!res.ok) {
+      throw new Error(`final stream push failed: ${res.status}`);
+    }
+  });
+}
+
 async function sendAgentDmText(params: {
   agent: ResolvedAgentAccount;
   userId: string;
@@ -500,10 +521,10 @@ function extractLocalImagePathsFromText(params: {
   const mustAlsoAppearIn = params.mustAlsoAppearIn;
   if (!text.trim()) return [];
 
-  // Conservative: only accept common macOS absolute paths for images.
+  // Conservative: only accept common absolute paths for macOS/Linux hosts.
   // Also require that the exact path appeared in the user's original message to prevent exfil.
   const exts = "(png|jpg|jpeg|gif|webp|bmp)";
-  const re = new RegExp(String.raw`(\/(?:Users|tmp)\/[^\s"'<>]+?\.${exts})`, "gi");
+  const re = new RegExp(String.raw`(\/(?:Users|tmp|root|home)\/[^\s"'<>]+?\.${exts})`, "gi");
   const found = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -518,9 +539,9 @@ function extractLocalImagePathsFromText(params: {
 function extractLocalFilePathsFromText(text: string): string[] {
   if (!text.trim()) return [];
 
-  // Conservative: only accept common macOS absolute paths.
+  // Conservative: only accept common absolute paths for macOS/Linux hosts.
   // This is primarily for “send local file” style requests (operator/debug usage).
-  const re = new RegExp(String.raw`(\/(?:Users|tmp)\/[^\s"'<>]+)`, "g");
+  const re = new RegExp(String.raw`(\/(?:Users|tmp|root|home)\/[^\s"'<>]+)`, "g");
   const found = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -684,7 +705,10 @@ async function processInboundMessage(target: WecomWebhookTarget, msg: WecomInbou
         target.runtime.error?.(
           `图片解密失败: ${String(err)}; 可调大 channels.wecom.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom.media.maxBytes ${50 * 1024 * 1024}`,
         );
-        return { body: `[image] (decryption failed: ${typeof err === 'object' && err ? (err as any).message : String(err)})` };
+        const errorMessage = typeof err === 'object' && err 
+          ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
+          : String(err);
+        return { body: `[image] (decryption failed: ${errorMessage})` };
       }
     }
   }
@@ -706,7 +730,10 @@ async function processInboundMessage(target: WecomWebhookTarget, msg: WecomInbou
         target.runtime.error?.(
           `Failed to decrypt inbound file: ${String(err)}; 可调大 channels.wecom.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom.media.maxBytes ${50 * 1024 * 1024}`,
         );
-        return { body: `[file] (decryption failed: ${typeof err === 'object' && err ? (err as any).message : String(err)})` };
+        const errorMessage = typeof err === 'object' && err 
+          ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
+          : String(err);
+        return { body: `[file] (decryption failed: ${errorMessage})` };
       }
     }
   }
@@ -739,7 +766,10 @@ async function processInboundMessage(target: WecomWebhookTarget, msg: WecomInbou
               target.runtime.error?.(
                 `Failed to decrypt mixed ${t}: ${String(err)}; 可调大 channels.wecom.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom.media.maxBytes ${50 * 1024 * 1024}`,
               );
-              bodyParts.push(`[${t}] (decryption failed)`);
+              const errorMessage = typeof err === 'object' && err 
+                ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
+                : String(err);
+              bodyParts.push(`[${t}] (decryption failed: ${errorMessage})`);
             }
           } else {
             bodyParts.push(`[${t}]`);
@@ -965,6 +995,56 @@ async function startAgentForStream(params: {
         streamStore.onStreamFinished(streamId);
         return;
       }
+
+      // 图片路径都读取失败时，切换到 Agent 私信兜底，并主动结束 Bot 流。
+      const agentCfg = resolveAgentAccountOrUndefined(config, account.accountId);
+      const agentOk = Boolean(agentCfg);
+      const fallbackName = imagePaths.length === 1
+        ? (imagePaths[0]!.split("/").pop() || "image")
+        : `${imagePaths.length} 张图片`;
+      const prompt = buildFallbackPrompt({
+        kind: "media",
+        agentConfigured: agentOk,
+        userId: userid,
+        filename: fallbackName,
+        chatType,
+      });
+
+      streamStore.updateStream(streamId, (s) => {
+        s.fallbackMode = "error";
+        s.finished = true;
+        s.content = prompt;
+        s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
+      });
+
+      try {
+        await sendBotFallbackPromptNow({ streamId, text: prompt });
+        logVerbose(target, `local-path: 图片读取失败后已推送兜底提示`);
+      } catch (err) {
+        target.runtime.error?.(`local-path: 图片读取失败后的兜底提示推送失败: ${String(err)}`);
+      }
+
+      if (agentCfg && userid && userid !== "unknown") {
+        for (const p of imagePaths) {
+          try {
+            await sendAgentDmMedia({
+              agent: agentCfg,
+              userId: userid,
+              mediaUrlOrPath: p,
+              contentType: guessContentTypeFromPath(p),
+              filename: p.split("/").pop() || "image",
+            });
+            streamStore.updateStream(streamId, (s) => {
+              s.agentMediaKeys = Array.from(new Set([...(s.agentMediaKeys ?? []), p]));
+            });
+            logVerbose(target, `local-path: 图片已通过 Agent 私信发送 user=${userid} path=${p}`);
+          } catch (err) {
+            target.runtime.error?.(`local-path: 图片 Agent 私信兜底失败 path=${p}: ${String(err)}`);
+          }
+        }
+      }
+      streamStore.onStreamFinished(streamId);
+      return;
     }
 
     // 2) 非图片文件：Bot 会话里提示 + Agent 私信兜底（目标锁定 userId）
@@ -1173,7 +1253,7 @@ async function startAgentForStream(params: {
     SenderName: userid,
     SenderId: userid,
     Provider: "wecom",
-    Surface: "wecom",
+    Surface: "webchat",
     MessageSid: msg.msgid,
     CommandAuthorized: commandAuthorized,
     OriginatingChannel: "wecom",
@@ -1212,8 +1292,10 @@ async function startAgentForStream(params: {
     const baseTools = (config as any)?.tools ?? {};
     const baseSandbox = (baseTools as any)?.sandbox ?? {};
     const baseSandboxTools = (baseSandbox as any)?.tools ?? {};
-    const existingDeny = Array.isArray((baseSandboxTools as any).deny) ? ((baseSandboxTools as any).deny as string[]) : [];
-    const deny = Array.from(new Set([...existingDeny, "message"]));
+    const existingTopLevelDeny = Array.isArray((baseTools as any).deny) ? ((baseTools as any).deny as string[]) : [];
+    const existingSandboxDeny = Array.isArray((baseSandboxTools as any).deny) ? ((baseSandboxTools as any).deny as string[]) : [];
+    const topLevelDeny = Array.from(new Set([...existingTopLevelDeny, "message"]));
+    const sandboxDeny = Array.from(new Set([...existingSandboxDeny, "message"]));
     return {
       ...(config as any),
       agents: {
@@ -1237,17 +1319,18 @@ async function startAgentForStream(params: {
       },
       tools: {
         ...baseTools,
+        deny: topLevelDeny,
         sandbox: {
           ...baseSandbox,
           tools: {
             ...baseSandboxTools,
-            deny,
+            deny: sandboxDeny,
           },
         },
       },
     } as OpenClawConfig;
   })();
-  logVerbose(target, `tool-policy: WeCom Bot 会话已禁用 message 工具（tools.sandbox.tools.deny += message，防止绕过 Bot 交付）`);
+  logVerbose(target, `tool-policy: WeCom Bot 会话已禁用 message 工具（tools.deny += message；并同步到 tools.sandbox.tools.deny，防止绕过 Bot 交付）`);
 
   // 调度 Agent 回复
   // 使用 dispatchReplyWithBufferedBlockDispatcher 可以处理流式输出 buffer
@@ -1331,9 +1414,10 @@ async function startAgentForStream(params: {
         if (!current.images) current.images = [];
         if (!current.agentMediaKeys) current.agentMediaKeys = [];
 
+        const deliverKind = info?.kind ?? "block";
         logVerbose(
           target,
-          `deliver: kind=${info.kind} chatType=${current.chatType ?? chatType} user=${current.userId ?? userid} textLen=${text.length} mediaCount=${(payload.mediaUrls?.length ?? 0) + (payload.mediaUrl ? 1 : 0)}`,
+          `deliver: kind=${deliverKind} chatType=${current.chatType ?? chatType} user=${current.userId ?? userid} textLen=${text.length} mediaCount=${(payload.mediaUrls?.length ?? 0) + (payload.mediaUrl ? 1 : 0)}`,
         );
 
         // If the model referenced a local image path in its reply but did not emit mediaUrl(s),
@@ -1379,7 +1463,7 @@ async function startAgentForStream(params: {
           });
         }
 
-        // Timeout fallback (group only): near 6min window, stop bot stream and switch to Agent DM.
+        // Timeout fallback: near 6min window, stop bot stream and switch to Agent DM.
         const now = Date.now();
         const deadline = current.createdAt + BOT_WINDOW_MS;
         const switchAt = deadline - BOT_SWITCH_MARGIN_MS;
@@ -1414,10 +1498,10 @@ async function startAgentForStream(params: {
 
         const mediaUrls = payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
         for (const mediaPath of mediaUrls) {
+          let contentType: string | undefined;
+          let filename = mediaPath.split("/").pop() || "attachment";
           try {
             let buf: Buffer;
-            let contentType: string | undefined;
-            let filename: string;
 
             const looksLikeUrl = /^https?:\/\//i.test(mediaPath);
 
@@ -1494,6 +1578,48 @@ async function startAgentForStream(params: {
             }
           } catch (err) {
             target.runtime.error?.(`Failed to process outbound media: ${mediaPath}: ${String(err)}`);
+            const agentCfg = resolveAgentAccountOrUndefined(config, account.accountId);
+            const agentOk = Boolean(agentCfg);
+            const fallbackFilename = filename || mediaPath.split("/").pop() || "attachment";
+            if (agentCfg && current.userId && !current.agentMediaKeys.includes(mediaPath)) {
+              try {
+                await sendAgentDmMedia({
+                  agent: agentCfg,
+                  userId: current.userId,
+                  mediaUrlOrPath: mediaPath,
+                  contentType,
+                  filename: fallbackFilename,
+                });
+                streamStore.updateStream(streamId, (s) => {
+                  s.agentMediaKeys = Array.from(new Set([...(s.agentMediaKeys ?? []), mediaPath]));
+                });
+                logVerbose(target, `fallback(error): 媒体处理失败后已通过 Agent 私信发送 user=${current.userId}`);
+              } catch (sendErr) {
+                target.runtime.error?.(`fallback(error): 媒体处理失败后的 Agent 私信发送也失败: ${String(sendErr)}`);
+              }
+            }
+            if (!current.fallbackMode) {
+              const prompt = buildFallbackPrompt({
+                kind: "error",
+                agentConfigured: agentOk,
+                userId: current.userId,
+                filename: fallbackFilename,
+                chatType: current.chatType,
+              });
+              streamStore.updateStream(streamId, (s) => {
+                s.fallbackMode = "error";
+                s.finished = true;
+                s.content = prompt;
+                s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
+              });
+              try {
+                await sendBotFallbackPromptNow({ streamId, text: prompt });
+                logVerbose(target, `fallback(error): 群内提示已推送`);
+              } catch (pushErr) {
+                target.runtime.error?.(`wecom bot fallback prompt push failed (error) streamId=${streamId}: ${String(pushErr)}`);
+              }
+            }
+            return;
           }
         }
 
@@ -1532,6 +1658,12 @@ async function startAgentForStream(params: {
     }
   }
 
+  streamStore.updateStream(streamId, (s) => {
+    if (!s.content.trim() && !(s.images?.length ?? 0)) {
+      s.content = "✅ 已处理完成。";
+    }
+  });
+
   streamStore.markFinished(streamId);
 
   // Timeout fallback final delivery (Agent DM): send once after the agent run completes.
@@ -1556,35 +1688,19 @@ async function startAgentForStream(params: {
     }
   }
 
-  // Bot 群聊图片兜底：
-  // 依赖企业微信的“流式消息刷新”回调来拉取最终消息有时会出现客户端未能及时拉取到最后一帧的情况，
-  // 导致最终的图片(msg_item)没有展示。若存在 response_url，则在流结束后主动推送一次最终 stream 回复。
-  // 注：该行为以 response_url 是否可用为准；失败则仅记录日志，不影响原有刷新链路。
-  if (chatType === "group") {
-    const state = streamStore.getStream(streamId);
-    const hasImages = Boolean(state?.images?.length);
-    const responseUrl = getActiveReplyUrl(streamId);
-    if (state && hasImages && responseUrl) {
-      const finalReply = buildStreamReplyFromState(state) as unknown as Record<string, unknown>;
-      try {
-        await useActiveReplyOnce(streamId, async ({ responseUrl, proxyUrl }) => {
-          const res = await wecomFetch(
-            responseUrl,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(finalReply),
-            },
-            { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS },
-          );
-          if (!res.ok) {
-            throw new Error(`final stream push failed: ${res.status}`);
-          }
-        });
-        logVerbose(target, `final stream pushed via response_url (group) streamId=${streamId}, images=${state.images?.length ?? 0}`);
-      } catch (err) {
-        target.runtime.error?.(`final stream push via response_url failed (group) streamId=${streamId}: ${String(err)}`);
-      }
+  // 统一终结：只要 response_url 可用，尽量主动推一次最终流帧，确保“思考中”能及时收口。
+  // 失败仅记录日志，不影响 stream_refresh 被动拉取链路。
+  const stateAfterFinish = streamStore.getStream(streamId);
+  const responseUrl = getActiveReplyUrl(streamId);
+  if (stateAfterFinish && responseUrl) {
+    try {
+      await pushFinalStreamReplyNow(streamId);
+      logVerbose(
+        target,
+        `final stream pushed via response_url streamId=${streamId}, chatType=${chatType}, images=${stateAfterFinish.images?.length ?? 0}`,
+      );
+    } catch (err) {
+      target.runtime.error?.(`final stream push via response_url failed streamId=${streamId}: ${String(err)}`);
     }
   }
 

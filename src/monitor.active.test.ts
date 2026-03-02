@@ -190,14 +190,17 @@ describe("Monitor Active Features", () => {
         undiciFetch.mockResolvedValue(new Response("ok", { status: 200 }));
         await sendActiveMessage(streamId, "Active Hello");
 
-        expect(undiciFetch).toHaveBeenCalledWith(
-            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key",
+        expect(undiciFetch).toHaveBeenCalled();
+        const [url, init] = undiciFetch.mock.calls.at(-1)! as [string, RequestInit];
+        expect(url).toBe("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key");
+        expect(init).toEqual(
             expect.objectContaining({
                 method: "POST",
-                headers: expect.objectContaining({ "Content-Type": "application/json" }),
                 body: JSON.stringify({ msgtype: "text", text: { content: "Active Hello" } }),
             }),
         );
+        const headers = new Headers(init.headers);
+        expect(headers.get("content-type")).toBe("application/json");
     });
 
     it("should fallback non-image media to agent DM (and push a Chinese prompt)", async () => {
@@ -237,6 +240,6 @@ describe("Monitor Active Features", () => {
         expect(undiciFetch).toHaveBeenCalled();
     });
 
-    // 注：本机路径（/Users/... 或 /tmp/...）短路发图逻辑属于运行态特性，
+    // 注：本机路径（/Users/...、/tmp/...、/root/...、/home/...）短路发图逻辑属于运行态特性，
     // 单测在 fake timers + module singleton 状态下容易引入脆弱性；这里优先覆盖更关键的兜底链路与去重逻辑。
 });
