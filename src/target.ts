@@ -35,12 +35,12 @@ export interface ScopedWecomTarget {
  * 2. 检查显式类型前缀 (party:, tag:, group:, user:)。
  * 3. 启发式回退 (无前缀时):
  *    - 以 "wr" 或 "wc" 开头 -> Chat ID (群聊)
- *    - 纯数字 -> Party ID (部门)
+ *    - 纯数字 -> 默认 Party ID (部门)；如果 preferUserForDigits 为 true 则视为 User ID
  *    - 其他 -> User ID (用户)
  * 
  * @param raw - The raw target string (e.g. "party:1", "zhangsan", "wecom:wr123")
  */
-export function resolveWecomTarget(raw: string | undefined): WecomTarget | undefined {
+export function resolveWecomTarget(raw: string | undefined, options?: { preferUserForDigits?: boolean }): WecomTarget | undefined {
     if (!raw?.trim()) return undefined;
 
     // 1. Remove standard namespace prefixes (移除标准命名空间前缀)
@@ -78,6 +78,9 @@ export function resolveWecomTarget(raw: string | undefined): WecomTarget | undef
     // 纯数字优先被视为部门 ID (Parties)，方便运维配置 (如 "1" 代表根部门)
     // 如果必须要发送给纯数字 ID 的用户，请使用显式前缀 "user:1001"
     if (/^\d+$/.test(clean)) {
+        if (options?.preferUserForDigits) {
+            return { touser: clean };
+        }
         return { toparty: clean };
     }
 
@@ -93,7 +96,9 @@ export function resolveScopedWecomTarget(raw: string | undefined, defaultAccount
     if (agentScoped) {
         const accountId = agentScoped[1]?.trim() || defaultAccountId;
         const rawTarget = agentScoped[2]?.trim() || "";
-        const target = resolveWecomTarget(rawTarget);
+        // Agent scoped targets are almost always users in a conversation context.
+        // In this scope, we prefer treating numeric IDs as User IDs to avoid 81013 errors.
+        const target = resolveWecomTarget(rawTarget, { preferUserForDigits: true });
         return target ? { accountId, target, rawTarget } : undefined;
     }
 

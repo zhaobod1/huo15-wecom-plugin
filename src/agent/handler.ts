@@ -566,15 +566,15 @@ async function processAgentMessage(params: {
         }
         return;
     }
-
-    const ctxPayload = core.channel.reply.finalizeInboundContext({
-        Body: body,
-        RawBody: finalContent,
-        CommandBody: finalContent,
-        Attachments: attachments.length > 0 ? attachments : undefined,
-        From: isGroup ? `wecom:group:${peerId}` : `wecom:${fromUser}`,
-        To: `wecom:${peerId}`,
-        SessionKey: route.sessionKey,
+const ctxPayload = core.channel.reply.finalizeInboundContext({
+    Body: body,
+    RawBody: finalContent,
+    CommandBody: finalContent,
+    Attachments: attachments.length > 0 ? attachments : undefined,
+    From: isGroup ? `wecom:group:${peerId}` : `wecom:user:${fromUser}`,
+    To: `wecom:user:${peerId}`,
+    SessionKey: route.sessionKey,
+...
         AccountId: route.accountId,
         ChatType: isGroup ? "group" : "direct",
         ConversationLabel: fromLabel,

@@ -110,6 +110,7 @@
 - 🧯 `sdk-adapter` 为 WebSocket frame 异步处理补上显式兜底捕获，漏网异常记录为 runtime issue 而非崩溃。
 - ⏱ 回复窗口过期时占位符保活立即停止。
 - 🛠 **[重要修复]** Bot WS 模式下接收图片/文件现在使用消息体独立 `aeskey` 解密，修复之前保存密文导致 `Failed to optimize image` 的问题。
+- 🛠 **[重要修复]** 解决 Agent 模式下纯数字 UserID 被误判为部门 ID 导致的 81013 错误。在 `wecom-agent:` 作用域下，纯数字目标现在优先解析为用户。
 
 #### v2.3.11（2026-03-11）
 
