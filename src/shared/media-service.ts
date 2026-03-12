@@ -2,6 +2,7 @@ import type { PluginRuntime } from "openclaw/plugin-sdk";
 
 import type { NormalizedMediaAttachment } from "./media-types.js";
 import type { UnifiedInboundEvent } from "../types/index.js";
+import { decryptWecomMediaWithMeta } from "../media.js";
 
 export class WecomMediaService {
   constructor(private readonly core: PluginRuntime) {}
@@ -12,6 +13,21 @@ export class WecomMediaService {
       buffer: loaded.buffer,
       contentType: loaded.contentType,
       filename: loaded.fileName,
+    };
+  }
+
+  /**
+   * Download and decrypt WeCom AES-encrypted media.
+   * Bot-ws: each message carries a unique per-URL aeskey in the message body.
+   * Bot-webhook: uses the account-level EncodingAESKey.
+   * Both use AES-256-CBC with PKCS#7 padding (32-byte block), IV = key[:16].
+   */
+  async downloadEncryptedMedia(params: { url: string; aesKey: string }): Promise<NormalizedMediaAttachment> {
+    const decrypted = await decryptWecomMediaWithMeta(params.url, params.aesKey);
+    return {
+      buffer: decrypted.buffer,
+      contentType: decrypted.sourceContentType,
+      filename: decrypted.sourceFilename,
     };
   }
 
@@ -30,6 +46,10 @@ export class WecomMediaService {
     const first = event.attachments?.[0];
     if (!first?.remoteUrl) {
       return undefined;
+    }
+    // Bot-ws media is AES-encrypted; use decryption when aesKey is present
+    if (first.aesKey) {
+      return this.downloadEncryptedMedia({ url: first.remoteUrl, aesKey: first.aesKey });
     }
     return this.downloadRemoteMedia({ url: first.remoteUrl });
   }
