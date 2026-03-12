@@ -405,6 +405,23 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             raw: result.raw,
                         });
                     }
+                    case "copy": {
+                        const result = await docClient.copyDoc({
+                            agent: account,
+                            docId: params.docId,
+                            newName: params.newName,
+                            spaceId: params.spaceId,
+                            fatherId: params.fatherId,
+                        });
+                        return buildToolResult({
+                            ok: true,
+                            action: "copy",
+                            accountId: account.accountId,
+                            docId: result.docId,
+                            summary: `文档已成功复制，新 docId: ${result.docId}`,
+                            raw: result.raw,
+                        });
+                    }
                     case "get_info": {
                         const result = await docClient.getDocBaseInfo({
                             agent: account,
@@ -755,19 +772,46 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             raw: result.raw,
                         });
                     }
-                    case "smart_table_operate": {
+                    case "smart_table_operate":
+                    case "smartsheet_add_records":
+                    case "smartsheet_update_records":
+                    case "smartsheet_del_records":
+                    case "smartsheet_get_records":
+                    case "smartsheet_add_fields":
+                    case "smartsheet_update_fields":
+                    case "smartsheet_del_fields":
+                    case "smartsheet_get_fields":
+                    case "smartsheet_add_view":
+                    case "smartsheet_update_view":
+                    case "smartsheet_del_view":
+                    case "smartsheet_get_views": {
+                        const operationMap: Record<string, string> = {
+                            "smartsheet_add_records": "add_records",
+                            "smartsheet_update_records": "update_records",
+                            "smartsheet_del_records": "del_records",
+                            "smartsheet_get_records": "get_records",
+                            "smartsheet_add_fields": "add_fields",
+                            "smartsheet_update_fields": "update_fields",
+                            "smartsheet_del_fields": "del_fields",
+                            "smartsheet_get_fields": "get_fields",
+                            "smartsheet_add_view": "add_view",
+                            "smartsheet_update_view": "update_view",
+                            "smartsheet_del_view": "del_view",
+                            "smartsheet_get_views": "get_views",
+                        };
+                        const operation = params.operation || operationMap[action as string] || (action as string).replace("smartsheet_", "");
                         const result = await docClient.smartTableOperate({
                             agent: account,
                             docId: params.docId,
-                            operation: params.operation,
-                            bodyData: params.bodyData,
+                            operation,
+                            bodyData: params.bodyData || params,
                         });
                         return buildToolResult({
                             ok: true,
-                            action: "smart_table_operate",
+                            action,
                             accountId: account.accountId,
-                            docId: result.docId,
-                            summary: `智能表格操作（${params.operation}）已执行`,
+                            docId: params.docId,
+                            summary: `智能表格操作（${operation}）已执行`,
                             raw: result.raw,
                         });
                     }

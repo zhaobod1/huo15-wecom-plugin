@@ -232,6 +232,29 @@ export class WecomDocClient {
         };
     }
 
+    async copyDoc(params: { agent: ResolvedAgentAccount; docId: string; newName?: string; spaceId?: string; fatherId?: string }) {
+        const { agent, docId, newName, spaceId, fatherId } = params;
+        const payload: Record<string, unknown> = {
+            docid: readString(docId),
+        };
+        if (!payload.docid) throw new Error("docId required");
+        if (newName) payload.new_name = readString(newName);
+        if (spaceId) payload.spaceid = readString(spaceId);
+        if (fatherId) payload.fatherid = readString(fatherId);
+
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/copy_doc",
+            actionLabel: "copy_doc",
+            agent,
+            body: payload,
+        });
+        return {
+            raw: json,
+            docId: readString(json.docid),
+            url: readString(json.url),
+        };
+    }
+
     async getDocBaseInfo(params: { agent: ResolvedAgentAccount; docId: string }) {
         const { agent, docId } = params;
         const normalizedDocId = readString(docId);
@@ -515,10 +538,11 @@ export class WecomDocClient {
             agent,
             body: { requests: payload },
         });
+        const statisticList = readArray(json.statistic_list);
         return {
             raw: json,
-            items: readArray(json),
-            successCount: readArray(json).filter((item: any) => Number(item?.errcode ?? 0) === 0).length,
+            items: statisticList,
+            successCount: statisticList.filter((item: any) => Number(item?.errcode ?? 0) === 0).length,
         };
     }
 
@@ -532,7 +556,7 @@ export class WecomDocClient {
             agent,
             body: { docid: readString(docId) },
         });
-        return { raw: json, content: json };
+        return { raw: json, content: json.content || json };
     }
 
     async updateDocContent(params: { agent: ResolvedAgentAccount; docId: string; requests: unknown[]; version?: number }) {

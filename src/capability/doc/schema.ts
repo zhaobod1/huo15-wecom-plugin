@@ -130,6 +130,31 @@ export const wecomDocToolSchema = {
             additionalProperties: false,
             required: ["action", "docId"],
             properties: {
+                action: { const: "copy" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                newName: {
+                    type: "string",
+                    minLength: 1,
+                    description: "可选：复制后的新文档名",
+                },
+                spaceId: {
+                    type: "string",
+                    minLength: 1,
+                    description: "可选：目标空间 ID",
+                },
+                fatherId: {
+                    type: "string",
+                    minLength: 1,
+                    description: "可选：目标父目录 fileid",
+                },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId"],
+            properties: {
                 action: { const: "get_info" },
                 accountId: accountIdProperty,
                 docId: docIdProperty,
@@ -310,8 +335,49 @@ export const wecomDocToolSchema = {
                 accountId: accountIdProperty,
                 docId: docIdProperty,
                 request: {
-                    ...nonEmptyObjectProperty,
-                    description: "mod_doc_safty_setting 请求体。插件会自动补 docid。",
+                    type: "object",
+                    additionalProperties: true,
+                    description: "mod_doc_safty_setting 请求体；插件会自动补 docid",
+                    properties: {
+                        safty_setting: {
+                            type: "object",
+                            description: "安全设置",
+                            properties: {
+                                watermark_setting: {
+                                    type: "object",
+                                    description: "水印助手",
+                                    properties: {
+                                        enable_watermark: { type: "boolean" },
+                                        enable_doc_name: { type: "boolean" },
+                                        enable_user_name: { type: "boolean" },
+                                        enable_date: { type: "boolean" },
+                                        enable_time: { type: "boolean" },
+                                    },
+                                },
+                                share_setting: {
+                                    type: "object",
+                                    description: "分享设置",
+                                    properties: {
+                                        share_range: {
+                                            type: "integer",
+                                            description: "0-仅成员，1-成员及外部联系人，2-所有人",
+                                        },
+                                        enable_external_share: { type: "boolean" },
+                                    },
+                                },
+                            },
+                        },
+                        auth_setting: {
+                            type: "object",
+                            description: "权限设置",
+                            properties: {
+                                auth_type: {
+                                    type: "integer",
+                                    description: "0-公开，1-企业内，2-指定人",
+                                },
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -473,6 +539,79 @@ export const wecomDocToolSchema = {
                     description: "修改属性请求列表",
                     items: nonEmptyObjectProperty,
                 },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId", "records"],
+            properties: {
+                action: { const: "smartsheet_add_records" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
+                records: { type: "array", items: nonEmptyObjectProperty, description: "记录列表" },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId", "records"],
+            properties: {
+                action: { const: "smartsheet_update_records" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
+                records: { type: "array", items: nonEmptyObjectProperty, description: "更新记录列表，需包含 record_id" },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId", "record_ids"],
+            properties: {
+                action: { const: "smartsheet_del_records" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
+                record_ids: { type: "array", items: { type: "string" }, description: "记录 ID 列表" },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId"],
+            properties: {
+                action: { const: "smartsheet_get_records" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
+                record_ids: { type: "array", items: { type: "string" }, description: "可选：指定记录 ID 列表" },
+                offset: { type: "integer" },
+                limit: { type: "integer" },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId"],
+            properties: {
+                action: { const: "smartsheet_get_fields" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
+                view_id: { type: "string", description: "可选：视图 ID" },
+            },
+        },
+        {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "docId", "sheetId"],
+            properties: {
+                action: { const: "smartsheet_get_views" },
+                accountId: accountIdProperty,
+                docId: docIdProperty,
+                sheetId: { type: "string", description: "子表 ID" },
             },
         },
         {
