@@ -375,19 +375,12 @@ export const wecomDocToolSchema = {
                         oneOf: [
                             { required: ["replace_text"] },
                             { required: ["insert_text"] },
-                            { required: ["delete_text"] },
+                            { required: ["delete_content"] },
                             { required: ["update_text_property"] },
-                            { required: ["replace_image"] },
                             { required: ["insert_image"] },
-                            { required: ["delete_paragraph"] },
+                            { required: ["insert_page_break"] },
                             { required: ["insert_table"] },
-                            { required: ["insert_row"] },
-                            { required: ["insert_column"] },
-                            { required: ["delete_row"] },
-                            { required: ["delete_column"] },
-                            { required: ["merge_cells"] },
-                            { required: ["split_cells"] },
-                            { required: ["update_table_property"] }
+                            { required: ["insert_paragraph"] }
                         ]
                     },
                 },
@@ -445,8 +438,8 @@ export const wecomDocToolSchema = {
                 docId: docIdProperty,
                 request: {
                     type: "object",
-                    additionalProperties: true,
                     description: "mod_doc_safty_setting 请求体；包含 enable_readonly_copy, watermark 等",
+                    additionalProperties: true,
                     properties: {
                         enable_readonly_copy: { type: "boolean", description: "是否允许只读成员复制、下载" },
                         watermark: {
