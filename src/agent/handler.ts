@@ -687,47 +687,71 @@ async function processAgentMessage(params: {
         },
     });
 
-    // 调度回复
-    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-        ctx: ctxPayload,
-        cfg: config,
-        replyOptions: {
-            disableBlockStreaming: true,
-        },
-        dispatcherOptions: {
-            deliver: async (payload: { text?: string }, info: { kind: string }) => {
-                if (info.kind !== "final") {
-                    return;
-                }
-                const text = payload.text ?? "";
-                if (!text) return;
-
-                try {
-                    // 统一策略：Agent 模式在群聊场景默认只私信触发者（避免 wr/wc chatId 86008）
-                    await sendAgentApiText({ agent, toUser: fromUser, chatId: undefined, text });
-                    touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
-                    log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser}`);
-                } catch (err: unknown) {
-                    const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                    error?.(`[wecom-agent] reply failed: ${message}`);
-                    auditSink?.({
-                        transport: "agent-callback",
-                        category: "fallback-delivery-failed",
-                        summary: `agent callback reply failed user=${fromUser} kind=${info.kind}`,
-                        raw: {
-                            transport: "agent-callback",
-                            envelopeType: "xml",
-                            body: msg,
-                        },
-                        error: message,
-                    });
-                }
-            },
-            onError: (err: unknown, info: { kind: string }) => {
-                error?.(`[wecom-agent] ${info.kind} reply error: ${String(err)}`);
-            },
+    // 5秒无响应自动回复进度提示
+    const processingTimer = setTimeout(async () => {
+        try {
+            await sendAgentApiText({ 
+                agent, 
+                toUser: fromUser, 
+                chatId: undefined, 
+                text: "正在处理中，请稍候..." 
+            });
+            log?.(`[wecom-agent] sent processing notification to ${fromUser}`);
+        } catch (err) {
+            error?.(`[wecom-agent] failed to send processing notification: ${String(err)}`);
         }
-    });
+    }, 5000);
+
+    try {
+        // 调度回复
+        await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+            ctx: ctxPayload,
+            cfg: config,
+            replyOptions: {
+                disableBlockStreaming: true,
+            },
+            dispatcherOptions: {
+                deliver: async (payload: { text?: string }, info: { kind: string }) => {
+                    if (info.kind !== "final") {
+                        return;
+                    }
+                    
+                    // 收到最终回复，清除定时器
+                    clearTimeout(processingTimer);
+
+                    const text = payload.text ?? "";
+                    if (!text) return;
+
+                    try {
+                        // 统一策略：Agent 模式在群聊场景默认只私信触发者（避免 wr/wc chatId 86008）
+                        await sendAgentApiText({ agent, toUser: fromUser, chatId: undefined, text });
+                        touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
+                        log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser}`);
+                    } catch (err: unknown) {
+                        const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
+                        error?.(`[wecom-agent] reply failed: ${message}`);
+                        auditSink?.({
+                            transport: "agent-callback",
+                            category: "fallback-delivery-failed",
+                            summary: `agent callback reply failed user=${fromUser} kind=${info.kind}`,
+                            raw: {
+                                transport: "agent-callback",
+                                envelopeType: "xml",
+                                body: msg,
+                            },
+                            error: message,
+                        });
+                    }
+                },
+                onError: (err: unknown, info: { kind: string }) => {
+                    clearTimeout(processingTimer);
+                    error?.(`[wecom-agent] ${info.kind} reply error: ${String(err)}`);
+                },
+            }
+        });
+    } finally {
+        clearTimeout(processingTimer);
+    }
 }
 
 /**
