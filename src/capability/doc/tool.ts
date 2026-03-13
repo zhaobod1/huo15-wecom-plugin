@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { wecomDocToolSchema } from "./schema.js";
 import { WecomDocClient } from "./client.js";
@@ -1118,8 +1119,31 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         return buildToolResult({ ok: true, action, accountId: account.accountId, summary: summarizeAdvancedAccount(result, "list"), raw: result.raw });
                     }
                     case "upload_doc_image": {
-                        const result = await docClient.uploadDocImage({ agent: account, file_path: params.file_path });
-                        return buildToolResult({ ok: true, action, accountId: account.accountId, summary: "图片上传成功", raw: result });
+                        const filePath = params.file_path;
+                        if (!fs.existsSync(filePath)) {
+                            throw new Error(`File not found: ${filePath}`);
+                        }
+                        const fileContent = fs.readFileSync(filePath);
+                        const base64Content = fileContent.toString("base64");
+
+                        const result = await docClient.uploadDocImage({
+                            agent: account,
+                            docId: params.docId,
+                            base64_content: base64Content,
+                        });
+                        return buildToolResult({
+                            ok: true,
+                            action,
+                            accountId: account.accountId,
+                            summary: "图片上传成功",
+                            details: {
+                                url: result.url,
+                                width: result.width,
+                                height: result.height,
+                                size: result.size,
+                            },
+                            raw: result.raw,
+                        });
                     }
                     default:
                         throw new Error(`Unsupported action: ${String(action)}`);

@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import FormData from "form-data";
 import type { ResolvedAgentAccount } from "../../types/index.js";
 import { getAccessToken } from "../../transport/agent-api/core.js";
 import { wecomFetch } from "../../http.js";
@@ -886,28 +884,27 @@ export class WecomDocClient {
 
     // --- Material Management ---
 
-    async uploadDocImage(params: { agent: ResolvedAgentAccount; file_path: string }) {
-        const { agent, file_path } = params;
-        const accessToken = await getAccessToken(agent);
-        const proxyUrl = resolveWecomEgressProxyUrlFromNetwork();
+    async uploadDocImage(params: { agent: ResolvedAgentAccount; docId: string; base64_content: string }) {
+        const { agent, docId, base64_content } = params;
+        const normalizedDocId = readString(docId);
+        if (!normalizedDocId) throw new Error("docId required");
         
-        const form = new FormData();
-        form.append("media", fs.createReadStream(file_path));
-
-        const res = await wecomFetch(
-            `https://qyapi.weixin.qq.com/cgi-bin/media/uploadimg?access_token=${accessToken}`,
-            {
-                method: "POST",
-                body: form as any,
-                headers: form.getHeaders(),
-            },
-            { proxyUrl }
-        );
-
-        const json = await res.json() as any;
-        if (json.errcode) {
-            throw new Error(`WeCom API Error: ${json.errmsg} (${json.errcode})`);
-        }
-        return json;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/image_upload",
+            actionLabel: "upload_doc_image",
+            agent,
+            body: {
+                docid: normalizedDocId,
+                base64_content: base64_content
+            }
+        });
+        
+        return {
+            raw: json,
+            url: readString(json.url),
+            height: json.height,
+            width: json.width,
+            size: json.size
+        };
     }
 }

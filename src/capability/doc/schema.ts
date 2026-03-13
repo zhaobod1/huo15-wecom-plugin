@@ -1390,10 +1390,14 @@ export const wecomDocToolSchema = {
         {
             type: "object",
             additionalProperties: false,
-            required: ["action", "file_path"],
+            required: ["action", "file_path", "docId"],
             properties: {
                 action: { const: "upload_doc_image" },
                 accountId: accountIdProperty,
+                docId: {
+                    ...docIdProperty,
+                    description: "文档 docid，上传图片需要关联文档",
+                },
                 file_path: { type: "string", description: "本地图片路径" },
             },
         },
