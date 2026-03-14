@@ -406,18 +406,8 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                     if (!response.ok) {
                                         throw new Error(`Failed to download image: ${url}`);
                                     }
-                                    const blob = await response.blob();
-                                    return new Promise((resolve, reject) => {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => {
-                                            const result = reader.result as string;
-                                            // Remove data:image/png;base64, prefix
-                                            const parts = result.split(',');
-                                            resolve(parts[1] || parts[0]);
-                                        };
-                                        reader.onerror = reject;
-                                        reader.readAsDataURL(blob);
-                                    });
+                                    const arrayBuffer = await response.arrayBuffer();
+                                    return Buffer.from(arrayBuffer).toString("base64");
                                 };
 
                                 // Helper: get text from content item

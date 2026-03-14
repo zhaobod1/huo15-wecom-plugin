@@ -141,8 +141,8 @@ export const wecomOutbound: ChannelOutboundAdapter = {
   },
   sendText: async ({ cfg, to, text, accountId }: ChannelOutboundContext) => {
     // signal removed - not supported in current SDK
-    // Resolve agent config first for logging
-    const agent = resolveAgentConfigOrThrow({ cfg, accountId });
+    // Defer Agent resolution until the Agent fallback path
+    // sendTextViaBotWs() can already deliver without Agent mode
 
     // 体验优化：/new /reset 的“New session started”回执在 OpenClaw 核心里是英文固定文案，
     // 且通过 routeReply 走 wecom outbound（Agent 主动发送）。
@@ -160,7 +160,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
 
     if (looksLikeNewSessionAck) {
       if (!isAgentSessionTarget) {
-        getAccountRuntime(agent.accountId)?.log.info?.(`[wecom-outbound] Suppressed command ack to avoid Bot/Agent double-reply (len=${trimmed.length})`);
+        // Suppress ack without agent resolution
         return { channel: "wecom", messageId: `suppressed-${Date.now()}`, timestamp: Date.now() };
       }
 
@@ -169,13 +169,12 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         return m?.[1]?.trim();
       })();
       const rewritten = modelLabel ? `✅ 已开启新会话（模型：${modelLabel}）` : "✅ 已开启新会话。";
-      getAccountRuntime(agent.accountId)?.log.info?.(`[wecom-outbound] Rewrote command ack for agent session (len=${rewritten.length})`);
       outgoingText = rewritten;
     }
 
-    getAccountRuntime(agent.accountId)?.log.info?.(`[wecom-outbound] Sending text to target=${String(to ?? "")} (len=${outgoingText.length})`);
-
     let sentViaBotWs = false;
+    let agent: any = null;
+    
     try {
       sentViaBotWs = await sendTextViaBotWs({
         cfg,
@@ -184,6 +183,9 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         text: outgoingText,
       });
       if (!sentViaBotWs) {
+        // Defer Agent resolution until needed for fallback
+        agent = resolveAgentConfigOrThrow({ cfg, accountId });
+        getAccountRuntime(agent.accountId)?.log.info?.(`[wecom-outbound] Sending text to target=${String(to ?? "")} (len=${outgoingText.length})`);
         const deliveryService = new WecomAgentDeliveryService(agent);
         await deliveryService.sendText({
           to,
@@ -192,7 +194,9 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         console.log(`[wecom-outbound] Successfully sent Agent text to ${String(to ?? "")}`);
       }
     } catch (err) {
-      getAccountRuntime(agent.accountId)?.log.error?.(`[wecom-outbound] Failed to send text to ${String(to ?? "")}: ${err instanceof Error ? err.message : String(err)}`);
+      if (agent) {
+        getAccountRuntime(agent.accountId)?.log.error?.(`[wecom-outbound] Failed to send text to ${String(to ?? "")}: ${err instanceof Error ? err.message : String(err)}`);
+      }
       throw err;
     }
 

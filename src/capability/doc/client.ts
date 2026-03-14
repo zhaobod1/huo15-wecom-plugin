@@ -854,8 +854,9 @@ export class WecomDocClient {
         
         // Validate range limits per API spec
         const rowCount = rows.length;
-        const columnCount = rows.length > 0 ? (rows[0].values?.length || 0) : 0;
-        const totalCells = rowCount * columnCount;
+        const rowWidths = rows.map((row: any) => row.values?.length || 0);
+        const columnCount = rowWidths.length > 0 ? Math.max(...rowWidths) : 0;
+        const totalCells = rowWidths.reduce((sum: number, width: number) => sum + width, 0);
         
         if (rowCount > 1000) {
             throw new Error(`行数不能超过 1000，当前：${rowCount}`);

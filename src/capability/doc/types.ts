@@ -601,7 +601,7 @@ export interface Color {
     red: number;     // 0~255
     green: number;   // 0~255
     blue: number;    // 0~255
-    alpha: number;   // 0~255，默认 255（不透明）
+    alpha?: number;  // 0~255，默认 255（不透明），可选
 }
 
 export enum Dimension {
