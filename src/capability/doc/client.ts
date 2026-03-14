@@ -483,33 +483,34 @@ export class WecomDocClient {
     }
 
     /**
-     * 智能更新文档内容
+     * 更新文档内容（支持批量操作）
      * 
-     * 企微文档 API 限制：
-     * 1. 不支持批量混合操作（insert_paragraph + insert_text 必须分开）
-     * 2. 每次只能执行 1 个原子操作
-     * 3. 必须在段落开头插入文本
-     * 4. 每次操作前需获取最新 version
-     * 5. 图片插入需在空段落位置
+     * 企微官方 API 说明：
+     * - 支持批量更新，最多 30 个操作
+     * - 所有操作的索引必须基于同一个版本文档快照
+     * - 原子性：一个失败则全部回滚
+     * - version 与最新版本差值不能超过 100
      * 
-     * 本方法自动处理以上限制，确保可靠执行
+     * 使用模式：
+     * 1. batchMode=false（默认）：逐个执行，每个操作前自动获取最新版本，可靠性高
+     * 2. batchMode=true：一次性批量执行，需要用户确保索引计算正确，性能更好
      */
     async updateDocContent(params: { 
         agent: ResolvedAgentAccount; 
         docId: string; 
         requests: UpdateRequest[]; 
         version?: number;
-        smartMode?: boolean;  // 自动分段执行模式（默认 true）
+        batchMode?: boolean;  // 批量模式（默认 false）
     }) {
-        const { agent, docId, requests, version, smartMode = true } = params;
+        const { agent, docId, requests, version, batchMode = false } = params;
         
         const requestList = readArray(requests);
         if (requestList.length === 0) {
              throw new Error("requests list cannot be empty");
         }
 
-        // 智能模式：逐个执行请求，每次获取最新版本号
-        if (smartMode) {
+        // 批量模式：一次性发送所有请求（需要用户确保索引正确）
+        if (batchMode) {
             let currentVersion = version;
             
             // 如果未提供版本号，先获取最新文档
@@ -518,71 +519,197 @@ export class WecomDocClient {
                 currentVersion = content.version;
             }
 
-            const results = [];
-            for (let i = 0; i < requestList.length; i++) {
-                const request = requestList[i];
-                
-                // 每次操作前获取最新文档结构和版本号
-                const content = await this.getDocContent({ agent, docId });
-                currentVersion = content.version;
-
-                const body: Record<string, unknown> = {
-                    docid: readString(docId),
-                    requests: [request],  // 每次只执行一个请求
-                    version: currentVersion,
-                };
-                
-                let lastErr: any;
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        const json = await this.postWecomDocApi({
-                            path: "/cgi-bin/wedoc/document/batch_update",
-                            actionLabel: `update_doc_content (${i + 1}/${requestList.length})`,
-                            agent,
-                            body,
-                        }) as BatchUpdateDocResponse;
-                        
-                        results.push({ index: i, success: true, request });
-                        break;
-                    } catch (err: any) {
-                        lastErr = err;
-                        // 如果是段落索引错误，尝试重新获取文档结构
-                        if (err.message?.includes("cannot find p")) {
-                            await new Promise(r => setTimeout(r, 500 * attempt));
-                        } else if (attempt < 3) {
-                            await new Promise(r => setTimeout(r, 1000));
-                        }
-                    }
-                }
-                
-                if (lastErr && i === requestList.length - 1) {
-                    throw lastErr;
-                }
-            }
-
+            const body: Record<string, unknown> = {
+                docid: readString(docId),
+                requests: requestList,
+                version: currentVersion,
+            };
+            
+            const json = await this.postWecomDocApi({
+                path: "/cgi-bin/wedoc/document/batch_update",
+                actionLabel: "update_doc_content (batch)",
+                agent,
+                body,
+            }) as BatchUpdateDocResponse;
+            
             return { 
-                raw: { errcode: 0, errmsg: "ok", results },
-                executedCount: results.length,
-                successCount: results.filter(r => r.success).length
+                raw: json,
+                batchMode: true,
+                requestCount: requestList.length
             };
         }
 
-        // 传统模式：批量执行（可能失败）
-        const body: Record<string, unknown> = {
-            docid: readString(docId),
-            requests: requestList,
-        };
-        if (version !== undefined && version !== null) {
-            body.version = Number(version);
-        }
+        // 顺序模式（默认）：逐个执行，每次自动获取最新版本号
+        // 优点：可靠性高，索引自动修正
+        // 缺点：API 调用次数多
+        let currentVersion = version;
         
-        const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/document/batch_update",
-            actionLabel: "update_doc_content",
-            agent,
-            body,
-        }) as BatchUpdateDocResponse;
-        return { raw: json };
+        if (currentVersion === undefined || currentVersion === null) {
+            const content = await this.getDocContent({ agent, docId });
+            currentVersion = content.version;
+        }
+
+        const results = [];
+        for (let i = 0; i < requestList.length; i++) {
+            const request = requestList[i];
+            
+            // 每次操作前获取最新文档结构和版本号
+            const content = await this.getDocContent({ agent, docId });
+            currentVersion = content.version;
+
+            const body: Record<string, unknown> = {
+                docid: readString(docId),
+                requests: [request],
+                version: currentVersion,
+            };
+            
+            let lastErr: any;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const json = await this.postWecomDocApi({
+                        path: "/cgi-bin/wedoc/document/batch_update",
+                        actionLabel: `update_doc_content (${i + 1}/${requestList.length})`,
+                        agent,
+                        body,
+                    }) as BatchUpdateDocResponse;
+                    
+                    results.push({ index: i, success: true, request });
+                    break;
+                } catch (err: any) {
+                    lastErr = err;
+                    if (err.message?.includes("cannot find p") || err.message?.includes("version")) {
+                        await new Promise(r => setTimeout(r, 500 * attempt));
+                    } else if (attempt < 3) {
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+            }
+            
+            if (lastErr) {
+                throw new Error(`请求 ${i + 1} 失败：${lastErr.message}`);
+            }
+        }
+
+        return { 
+            raw: { errcode: 0, errmsg: "ok", results },
+            batchMode: false,
+            executedCount: results.length,
+            successCount: results.filter(r => r.success).length
+        };
+    }
+
+    /**
+     * 批量更新文档内容（高级 API）
+     * 
+     * 自动计算索引，支持链式操作
+     * 
+     * @example
+     * ```typescript
+     * // 场景 1：插入多个段落和文本
+     * await docClient.batchUpdateDocSmart({
+     *     agent, docId,
+     *     operations: [
+     *         { type: 'paragraph', afterIndex: 0 },
+     *         { type: 'text', text: "第一段内容" },
+     *         { type: 'paragraph' },
+     *         { type: 'text', text: "第二段内容" }
+     *     ]
+     * });
+     * 
+     * // 场景 2：插入图片
+     * await docClient.batchUpdateDocSmart({
+     *     agent, docId,
+     *     operations: [
+     *         { type: 'paragraph', afterIndex: 10 },
+     *         { type: 'image', imageId: "https://...", width: 800 }
+     *     ]
+     * });
+     * ```
+     */
+    async batchUpdateDocSmart(params: {
+        agent: ResolvedAgentAccount;
+        docId: string;
+        operations: Array<{
+            type: 'paragraph' | 'text' | 'image' | 'table';
+            text?: string;
+            imageId?: string;
+            width?: number;
+            height?: number;
+            rows?: number;
+            cols?: number;
+            afterIndex?: number;
+        }>;
+    }) {
+        const { agent, docId, operations } = params;
+        
+        // 获取最新文档结构
+        const content = await this.getDocContent({ agent, docId });
+        let currentVersion = content.version;
+        let currentIndex = operations[0]?.afterIndex ?? 0;
+
+        const results = [];
+        for (const op of operations) {
+            // 每次操作前获取最新版本
+            const latestContent = await this.getDocContent({ agent, docId });
+            currentVersion = latestContent.version;
+
+            let request: UpdateRequest;
+            
+            switch (op.type) {
+                case 'paragraph':
+                    request = { insert_paragraph: { location: { index: currentIndex } } };
+                    break;
+                    
+                case 'text':
+                    request = { insert_text: { location: { index: currentIndex }, text: op.text! } };
+                    break;
+                    
+                case 'image':
+                    request = { 
+                        insert_image: { 
+                            image_id: op.imageId!, 
+                            location: { index: currentIndex } 
+                        } 
+                    };
+                    if (op.width) request.insert_image!.width = op.width;
+                    if (op.height) request.insert_image!.height = op.height;
+                    break;
+                    
+                case 'table':
+                    request = {
+                        insert_table: {
+                            rows: op.rows || 3,
+                            cols: op.cols || 3,
+                            location: { index: currentIndex }
+                        }
+                    };
+                    break;
+                    
+                default:
+                    throw new Error(`未知操作类型：${(op as any).type}`);
+            }
+
+            const body: Record<string, unknown> = {
+                docid: readString(docId),
+                requests: [request],
+                version: currentVersion,
+            };
+
+            const json = await this.postWecomDocApi({
+                path: "/cgi-bin/wedoc/document/batch_update",
+                actionLabel: `batchUpdateDocSmart (${op.type})`,
+                agent,
+                body,
+            }) as BatchUpdateDocResponse;
+
+            results.push({ type: op.type, success: true });
+            currentIndex++;
+        }
+
+        return {
+            raw: { errcode: 0, errmsg: "ok", results },
+            executedCount: results.length
+        };
     }
 
     /**

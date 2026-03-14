@@ -832,26 +832,33 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         });
                     }
                     case "update_content": {
-                        // 智能模式：自动处理企微文档 API 限制
-                        // - 逐个执行请求，避免批量混合操作失败
-                        // - 自动获取最新版本号
-                        // - 自动重试段落索引错误
-                        const smartMode = params.smartMode !== false;  // 默认启用智能模式
+                        // 支持两种模式：
+                        // 1. batchMode=false（默认）：逐个执行，自动获取最新版本，可靠性高
+                        // 2. batchMode=true：批量执行，需要确保索引计算正确，性能更好
+                        const batchMode = params.batchMode === true;
                         
                         const result = await docClient.updateDocContent({
                             agent: account,
                             docId: params.docId,
                             requests: params.requests,
                             version: params.version,
-                            smartMode: smartMode,
+                            batchMode: batchMode,
                         });
+                        
+                        const modeLabel = batchMode ? '批量模式' : '顺序模式';
+                        const successCount = result.successCount || (result.batchMode ? params.requests?.length : 1);
+                        
                         return buildToolResult({
                             ok: true,
                             action: "update_content",
                             accountId: account.accountId,
                             docId: params.docId,
-                            summary: `文档内容已更新（智能模式：${smartMode ? '开启' : '关闭'}，成功 ${result.successCount || 1}/${params.requests?.length || 1} 个操作）`,
-                            details: result.executedCount ? { executedCount: result.executedCount, successCount: result.successCount } : undefined,
+                            summary: `文档内容已更新（${modeLabel}，成功 ${successCount}/${params.requests?.length || 1} 个操作）`,
+                            details: result.executedCount ? { 
+                                executedCount: result.executedCount, 
+                                successCount: result.successCount,
+                                batchMode: result.batchMode 
+                            } : undefined,
                             raw: result.raw,
                         });
                     }
