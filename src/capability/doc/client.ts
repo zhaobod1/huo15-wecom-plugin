@@ -48,6 +48,11 @@ export interface DocMemberEntry {
     userid?: string;
     partyid?: string;
     tagid?: string;
+    /**
+     * 权限位：1-查看，2-编辑，7-管理
+     * 只有“智能表格”才支持读写权限（auth=2）？
+     * 实际上企微文档现在也支持设置协作者权限了。
+     */
     auth?: number;
 }
 
@@ -81,7 +86,7 @@ function buildDocMemberAuthRequest(params: {
     collaborators?: unknown;
     removeViewers?: unknown;
     removeCollaborators?: unknown;
-    authLevel?: number;
+    authLevel?: number; // Default auth level for new members if not specified in entry
 }): Record<string, unknown> {
     const { docId, viewers, collaborators, removeViewers, removeCollaborators, authLevel } = params;
     const payload: Record<string, unknown> = {
@@ -379,8 +384,11 @@ export class WecomDocClient {
     }) {
         const { agent, docId, viewers, collaborators, removeViewers, removeCollaborators, authLevel } = params;
         
+        // Auto-detect: if adding collaborators, check if they are already viewers and need to be removed
+        // This prevents the "user is viewer but not collaborator" issue
         let finalRemoveViewers = removeViewers;
         if (collaborators && !removeViewers) {
+            // Need to check current auth status
             try {
                 const currentAuth = await this.getDocAuth({ agent, docId });
                 const viewerUserIds = new Set(
@@ -392,19 +400,20 @@ export class WecomDocClient {
                     .map(e => e.userid)
                     .filter(Boolean) as string[];
                 
-                const needRemove = newCollaboratorUserIds.filter(uid => viewerUserIds.has(uid));
-                if (needRemove.length > 0) {
-                    const existingRemove = normalizeDocMemberEntryList(removeViewers);
-                    finalRemoveViewers = [
-                        ...existingRemove,
-                        ...needRemove.map(uid => ({ userid: uid }))
-                    ];
+                // Auto-add viewers who are being promoted to collaborators
+                const autoRemoveViewers = newCollaboratorUserIds
+                    .filter(userid => viewerUserIds.has(userid))
+                    .map(userid => ({ userid, type: 1 }));
+                
+                if (autoRemoveViewers.length > 0) {
+                    finalRemoveViewers = autoRemoveViewers;
                 }
-            } catch {
-                // Ignore auth check errors, proceed with original request
+            } catch (err) {
+                // If we can't check auth, proceed without auto-removal
+                // The caller can explicitly pass removeViewers if needed
             }
         }
-
+        
         const payload = buildDocMemberAuthRequest({
             docId,
             viewers,
@@ -413,16 +422,252 @@ export class WecomDocClient {
             removeCollaborators,
             authLevel,
         });
-        
+        const result = await this.setDocMemberAuth({
+            agent,
+            docId: payload.docid as string,
+            request: payload,
+        });
+        return {
+            ...result,
+            addedViewerCount: (payload.update_file_member_list as any[])?.length ?? 0,
+            addedCollaboratorCount: (payload.update_co_auth_list as any[])?.length ?? 0,
+            removedViewerCount: (payload.del_file_member_list as any[])?.length ?? 0,
+            removedCollaboratorCount: (payload.del_co_auth_list as any[])?.length ?? 0,
+        };
+    }
+
+    async addDocCollaborators(params: { agent: ResolvedAgentAccount; docId: string; collaborators: unknown; auth?: number }) {
+        const { agent, docId, collaborators, auth } = params;
+        return this.grantDocAccess({
+            agent,
+            docId,
+            collaborators,
+            authLevel: auth ?? 2, // Default to edit/read-write for collaborators
+        });
+    }
+
+    async setDocSafetySetting(params: { agent: ResolvedAgentAccount; docId: string; request: any }) {
+        const { agent, docId, request } = params;
+        const payload = {
+            ...readObject(request),
+        };
+        payload.docid = readString(docId || payload.docid);
+        if (!payload.docid) throw new Error("docId required");
         const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/doc_grant_access",
-            actionLabel: "doc_grant_access",
+            path: "/cgi-bin/wedoc/mod_doc_safty_setting",
+            actionLabel: "mod_doc_safty_setting",
             agent,
             body: payload,
         });
         return {
             raw: json,
-            docId: readString(docId),
+            docId: payload.docid as string,
+        };
+    }
+
+    async createCollect(params: { agent: ResolvedAgentAccount; formInfo: any; spaceId?: string; fatherId?: string }) {
+        const { agent, formInfo, spaceId, fatherId } = params;
+        
+        // Validate form_info structure per API spec
+        if (!formInfo || typeof formInfo !== 'object') {
+            throw new Error("formInfo 必须是非空对象");
+        }
+        
+        // Validate required fields
+        if (!formInfo.form_title || readString(formInfo.form_title).length === 0) {
+            throw new Error("form_title 必填");
+        }
+        
+        if (!formInfo.form_question || !formInfo.form_question.items || !Array.isArray(formInfo.form_question.items)) {
+            throw new Error("form_question.items 必填且必须为数组");
+        }
+        
+        // Validate questions count ≤ 200
+        const questions = formInfo.form_question.items;
+        if (questions.length > 200) {
+            throw new Error("问题数量不能超过 200 个");
+        }
+        
+        // Validate each question
+        questions.forEach((q: any, index: number) => {
+            if (!q.question_id || !Number.isInteger(q.question_id) || q.question_id < 1) {
+                throw new Error(`第${index + 1}个问题：question_id 必填且必须从 1 开始`);
+            }
+            if (!q.title || readString(q.title).length === 0) {
+                throw new Error(`第${index + 1}个问题：title 必填`);
+            }
+            if (!q.pos || !Number.isInteger(q.pos) || q.pos < 1) {
+                throw new Error(`第${index + 1}个问题：pos 必填且必须从 1 开始`);
+            }
+            if (q.reply_type === undefined || !Number.isInteger(q.reply_type)) {
+                throw new Error(`第${index + 1}个问题：reply_type 必填`);
+            }
+            if (q.must_reply === undefined || typeof q.must_reply !== 'boolean') {
+                throw new Error(`第${index + 1}个问题：must_reply 必填且必须为布尔值`);
+            }
+            
+            // Validate option_item for single/multiple/dropdown questions
+            const requiresOptions = [2, 3, 15].includes(q.reply_type); // 单选/多选/下拉列表
+            if (requiresOptions) {
+                if (!Array.isArray(q.option_item) || q.option_item.length === 0) {
+                    throw new Error(`第${index + 1}个问题：单选/多选/下拉列表必须提供 option_item 数组`);
+                }
+                // Validate option keys are sequential from 1
+                q.option_item.forEach((opt: any, optIndex: number) => {
+                    if (!opt.key || !Number.isInteger(opt.key) || opt.key < 1) {
+                        throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：key 必填且从 1 开始`);
+                    }
+                    if (!opt.value || readString(opt.value).length === 0) {
+                        throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：value 必填`);
+                    }
+                });
+            }
+            
+            // Validate image/file upload limits
+            if ([9, 10].includes(q.reply_type)) { // 图片/文件
+                const setting = q.question_extend_setting;
+                if (setting) {
+                    const limit = setting.image_setting?.upload_image_limit || setting.file_setting?.upload_file_limit;
+                    if (limit) {
+                        if (limit.count !== undefined && (limit.count < 1 || limit.count > 9)) {
+                            throw new Error(`第${index + 1}个问题：图片/文件上传数量限制必须在 1-9 之间`);
+                        }
+                        if (limit.max_size !== undefined && limit.max_size > 3000) {
+                            throw new Error(`第${index + 1}个问题：单个文件大小限制最大 3000MB`);
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Validate timed_repeat_info and timed_finish are mutually exclusive
+        const formSetting = formInfo.form_setting || {};
+        if (formSetting.timed_repeat_info?.enable && formSetting.timed_finish) {
+            console.warn("警告：timed_finish 与 timed_repeat_info 互斥，若都填优先定时重复");
+        }
+        
+        // Build payload
+        const payload: Record<string, unknown> = {
+            form_info: {
+                form_title: readString(formInfo.form_title),
+                form_desc: formInfo.form_desc ? readString(formInfo.form_desc) : undefined,
+                form_header: formInfo.form_header ? readString(formInfo.form_header) : undefined,
+                form_question: formInfo.form_question,
+                form_setting: formSetting,
+            },
+        };
+        
+        const normalizedSpaceId = readString(spaceId);
+        const normalizedFatherId = readString(fatherId);
+        if (normalizedSpaceId) payload.spaceid = normalizedSpaceId;
+        if (normalizedFatherId) payload.fatherid = normalizedFatherId;
+        
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/create_collect",
+            actionLabel: "create_collect",
+            agent,
+            body: payload,
+        });
+        return {
+            raw: json,
+            formId: readString(json.formid),
+            title: readString((payload.form_info as any).form_title),
+        };
+    }
+
+    async modifyCollect(params: { agent: ResolvedAgentAccount; oper: string; formId: string; formInfo: any }) {
+        const { agent, oper, formId, formInfo } = params;
+        
+        // Validate oper parameter
+        const operNum = Number(oper);
+        if (!operNum || ![1, 2].includes(operNum)) {
+            throw new Error("oper 必填且必须为 1 或 2：1=全量修改问题，2=全量修改设置");
+        }
+        
+        const normalizedFormId = readString(formId);
+        if (!normalizedFormId) throw new Error("formId required");
+        
+        // Build payload based on oper type
+        const payload: Record<string, unknown> = {
+            oper: operNum,
+            formid: normalizedFormId,
+        };
+        
+        if (operNum === 1) {
+            // 全量修改问题：必须提供完整的 form_question 数组
+            if (!formInfo || !formInfo.form_question || !Array.isArray(formInfo.form_question.items)) {
+                throw new Error("oper=1 时，必须提供 form_question.items 数组（包含所有问题，缺失的问题将被删除）");
+            }
+            
+            // Validate questions count ≤ 200
+            const questions = formInfo.form_question.items;
+            if (questions.length > 200) {
+                throw new Error("问题数量不能超过 200 个");
+            }
+            
+            // Validate each question (same as createCollect)
+            questions.forEach((q: any, index: number) => {
+                if (!q.question_id || !Number.isInteger(q.question_id) || q.question_id < 1) {
+                    throw new Error(`第${index + 1}个问题：question_id 必填且必须从 1 开始`);
+                }
+                if (!q.title || readString(q.title).length === 0) {
+                    throw new Error(`第${index + 1}个问题：title 必填`);
+                }
+                if (!q.pos || !Number.isInteger(q.pos) || q.pos < 1) {
+                    throw new Error(`第${index + 1}个问题：pos 必填且必须从 1 开始`);
+                }
+                if (q.reply_type === undefined || !Number.isInteger(q.reply_type)) {
+                    throw new Error(`第${index + 1}个问题：reply_type 必填`);
+                }
+                if (q.must_reply === undefined || typeof q.must_reply !== 'boolean') {
+                    throw new Error(`第${index + 1}个问题：must_reply 必填且必须为布尔值`);
+                }
+                
+                // Validate option_item for single/multiple/dropdown questions
+                const requiresOptions = [2, 3, 15].includes(q.reply_type);
+                if (requiresOptions) {
+                    if (!Array.isArray(q.option_item) || q.option_item.length === 0) {
+                        throw new Error(`第${index + 1}个问题：单选/多选/下拉列表必须提供 option_item 数组`);
+                    }
+                    q.option_item.forEach((opt: any, optIndex: number) => {
+                        if (!opt.key || !Number.isInteger(opt.key) || opt.key < 1) {
+                            throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：key 必填且从 1 开始`);
+                        }
+                        if (!opt.value || readString(opt.value).length === 0) {
+                            throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：value 必填`);
+                        }
+                    });
+                }
+            });
+            
+            payload.form_info = { form_question: formInfo.form_question };
+            
+        } else if (operNum === 2) {
+            // 全量修改设置：必须提供完整的 form_setting 对象
+            if (!formInfo || !formInfo.form_setting || typeof formInfo.form_setting !== 'object') {
+                throw new Error("oper=2 时，必须提供 form_setting 对象（缺失的设置项将被重置为默认值）");
+            }
+            
+            // Validate timed_repeat_info and timed_finish are mutually exclusive
+            const formSetting = formInfo.form_setting;
+            if (formSetting.timed_repeat_info?.enable && formSetting.timed_finish) {
+                console.warn("警告：timed_finish 与 timed_repeat_info 互斥，若都填优先定时重复");
+            }
+            
+            payload.form_info = { form_setting: formSetting };
+        }
+        
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/modify_collect",
+            actionLabel: "modify_collect",
+            agent,
+            body: payload,
+        });
+        return {
+            raw: json,
+            formId: payload.formid as string,
+            oper: payload.oper as string,
+            title: formInfo?.form_title ? readString(formInfo.form_title) : undefined,
         };
     }
 
@@ -431,24 +676,53 @@ export class WecomDocClient {
         const normalizedFormId = readString(formId);
         if (!normalizedFormId) throw new Error("formId required");
         const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/form/get_info",
+            path: "/cgi-bin/wedoc/get_form_info",
             actionLabel: "get_form_info",
             agent,
             body: { formid: normalizedFormId },
         });
         return {
             raw: json,
-            info: json.form_info && typeof json.form_info === "object" ? json.form_info : {},
+            formInfo: readObject(json.form_info),
         };
     }
 
-    async getFormStatistic(params: { agent: ResolvedAgentAccount; formId: string; requests: unknown }) {
+    async getFormAnswer(params: { agent: ResolvedAgentAccount; repeatedId: string; answerIds?: unknown[] }) {
+        const { agent, repeatedId, answerIds } = params;
+        const normalizedRepeatedId = readString(repeatedId);
+        if (!normalizedRepeatedId) throw new Error("repeatedId required");
+        const normalizedAnswerIds = Array.isArray(answerIds)
+            ? answerIds
+                .map((item) => Number(item))
+                .filter((item) => Number.isFinite(item))
+            : [];
+        const payload: Record<string, unknown> = {
+            repeated_id: normalizedRepeatedId,
+        };
+        if (normalizedAnswerIds.length > 0) {
+            payload.answer_ids = normalizedAnswerIds;
+        }
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/get_form_answer",
+            actionLabel: "get_form_answer",
+            agent,
+            body: payload,
+        });
+        const answer = readObject(json.answer);
+        return {
+            raw: json,
+            answer,
+            answerList: readArray((answer as any).answer_list),
+        };
+    }
+
+    async getFormStatistic(params: { agent: ResolvedAgentAccount; requests: unknown[] }) {
         const { agent, requests } = params;
         const payload = Array.isArray(requests)
             ? requests.map((item) => readObject(item)).filter((item) => Object.keys(item).length > 0)
             : [];
         if (payload.length === 0) {
-            throw new Error("requests list cannot be empty");
+            throw new Error("requests required");
         }
         const json = await this.postWecomDocApi({
             path: "/cgi-bin/wedoc/get_form_statistic",
@@ -464,7 +738,7 @@ export class WecomDocClient {
         };
     }
 
-    // --- Content Operations (Enhanced) ---
+    // --- Content Operations (New) ---
 
     async getDocContent(params: { agent: ResolvedAgentAccount; docId: string }) {
         const { agent, docId } = params;
@@ -475,6 +749,7 @@ export class WecomDocClient {
             body: { docid: readString(docId) },
         }) as GetDocContentResponse;
         
+        // Ensure structure strictly matches official API: { version: number, document: Node }
         return {
             raw: json,
             version: json.version,
@@ -482,358 +757,31 @@ export class WecomDocClient {
         };
     }
 
-    /**
-     * 更新文档内容（支持批量操作）
-     * 
-     * 企微官方 API 说明：
-     * - 支持批量更新，最多 30 个操作
-     * - 所有操作的索引必须基于同一个版本文档快照
-     * - 原子性：一个失败则全部回滚
-     * - version 与最新版本差值不能超过 100
-     * 
-     * ⚠️ 重要限制（经过实际测试验证）：
-     * - insert_text 必须指向已有 Run 元素的位置，不能在空段落执行
-     * - 批量操作中，所有索引基于请求发送时的文档快照
-     * - 不能"先创建段落再插入文本"（新段落在快照中不存在）
-     * - 批量插入多个段落后，后续 insert_text 的索引需要精确计算
-     * 
-     * 使用模式：
-     * 1. batchMode=false（默认）：逐个执行，每个操作前自动获取最新版本，可靠性高 ✅ 推荐
-     * 2. batchMode=true：一次性批量执行，需要确保索引计算正确，仅适用于简单场景 ⚠️ 慎用
-     * 
-     * 最佳实践：
-     * - 创建带内容的文档：使用 createDoc + init_content 参数（最可靠）
-     * - 更新现有文档：使用 batchMode=false 顺序模式
-     * - 批量追加文本：确保所有 insert_text 的索引指向已有 Run 元素
-     */
-    async updateDocContent(params: { 
-        agent: ResolvedAgentAccount; 
-        docId: string; 
-        requests: UpdateRequest[]; 
-        version?: number;
-        batchMode?: boolean;  // 批量模式（默认 false）
-    }) {
-        const { agent, docId, requests, version, batchMode = false } = params;
+    async updateDocContent(params: { agent: ResolvedAgentAccount; docId: string; requests: UpdateRequest[]; version?: number }) {
+        const { agent, docId, requests, version } = params;
         
+        // Validate requests structure basic check
         const requestList = readArray(requests);
         if (requestList.length === 0) {
              throw new Error("requests list cannot be empty");
         }
 
-        // 批量模式：一次性发送所有请求（需要用户确保索引正确）
-        if (batchMode) {
-            let currentVersion = version;
-            
-            // 如果未提供版本号，先获取最新文档
-            if (currentVersion === undefined || currentVersion === null) {
-                const content = await this.getDocContent({ agent, docId });
-                currentVersion = content.version;
-            }
-
-            const body: Record<string, unknown> = {
-                docid: readString(docId),
-                requests: requestList,
-                version: currentVersion,
-            };
-            
-            const json = await this.postWecomDocApi({
-                path: "/cgi-bin/wedoc/document/batch_update",
-                actionLabel: "update_doc_content (batch)",
-                agent,
-                body,
-            }) as BatchUpdateDocResponse;
-            
-            return { 
-                raw: json,
-                batchMode: true,
-                requestCount: requestList.length
-            };
-        }
-
-        // 顺序模式（默认）：逐个执行，每次自动获取最新版本号
-        // 优点：可靠性高，索引自动修正
-        // 缺点：API 调用次数多
-        let currentVersion = version;
-        
-        if (currentVersion === undefined || currentVersion === null) {
-            const content = await this.getDocContent({ agent, docId });
-            currentVersion = content.version;
-        }
-
-        const results = [];
-        for (let i = 0; i < requestList.length; i++) {
-            const request = requestList[i];
-            
-            // 每次操作前获取最新文档结构和版本号
-            const content = await this.getDocContent({ agent, docId });
-            currentVersion = content.version;
-
-            const body: Record<string, unknown> = {
-                docid: readString(docId),
-                requests: [request],
-                version: currentVersion,
-            };
-            
-            let lastErr: any;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    const json = await this.postWecomDocApi({
-                        path: "/cgi-bin/wedoc/document/batch_update",
-                        actionLabel: `update_doc_content (${i + 1}/${requestList.length})`,
-                        agent,
-                        body,
-                    }) as BatchUpdateDocResponse;
-                    
-                    results.push({ index: i, success: true, request });
-                    break;
-                } catch (err: any) {
-                    lastErr = err;
-                    if (err.message?.includes("cannot find p") || err.message?.includes("version")) {
-                        await new Promise(r => setTimeout(r, 500 * attempt));
-                    } else if (attempt < 3) {
-                        await new Promise(r => setTimeout(r, 1000));
-                    }
-                }
-            }
-            
-            if (lastErr) {
-                throw new Error(`请求 ${i + 1} 失败：${lastErr.message}`);
-            }
-        }
-
-        return { 
-            raw: { errcode: 0, errmsg: "ok", results },
-            batchMode: false,
-            executedCount: results.length,
-            successCount: results.filter(r => r.success).length
+        const body: Record<string, unknown> = {
+            docid: readString(docId),
+            requests: requestList,
         };
-    }
-
-    /**
-     * 批量更新文档内容（高级 API）
-     * 
-     * 自动计算索引，支持链式操作
-     * 
-     * @example
-     * ```typescript
-     * // 场景 1：插入多个段落和文本
-     * await docClient.batchUpdateDocSmart({
-     *     agent, docId,
-     *     operations: [
-     *         { type: 'paragraph', afterIndex: 0 },
-     *         { type: 'text', text: "第一段内容" },
-     *         { type: 'paragraph' },
-     *         { type: 'text', text: "第二段内容" }
-     *     ]
-     * });
-     * 
-     * // 场景 2：插入图片
-     * await docClient.batchUpdateDocSmart({
-     *     agent, docId,
-     *     operations: [
-     *         { type: 'paragraph', afterIndex: 10 },
-     *         { type: 'image', imageId: "https://...", width: 800 }
-     *     ]
-     * });
-     * ```
-     */
-    async batchUpdateDocSmart(params: {
-        agent: ResolvedAgentAccount;
-        docId: string;
-        operations: Array<{
-            type: 'paragraph' | 'text' | 'image' | 'table';
-            text?: string;
-            imageId?: string;
-            width?: number;
-            height?: number;
-            rows?: number;
-            cols?: number;
-            afterIndex?: number;
-        }>;
-    }) {
-        const { agent, docId, operations } = params;
-        
-        // 获取最新文档结构
-        const content = await this.getDocContent({ agent, docId });
-        let currentVersion = content.version;
-        let currentIndex = operations[0]?.afterIndex ?? 0;
-
-        const results = [];
-        for (const op of operations) {
-            // 每次操作前获取最新版本
-            const latestContent = await this.getDocContent({ agent, docId });
-            currentVersion = latestContent.version;
-
-            let request: UpdateRequest;
-            
-            switch (op.type) {
-                case 'paragraph':
-                    request = { insert_paragraph: { location: { index: currentIndex } } };
-                    break;
-                    
-                case 'text':
-                    request = { insert_text: { location: { index: currentIndex }, text: op.text! } };
-                    break;
-                    
-                case 'image':
-                    request = { 
-                        insert_image: { 
-                            image_id: op.imageId!, 
-                            location: { index: currentIndex } 
-                        } 
-                    };
-                    if (op.width) request.insert_image!.width = op.width;
-                    if (op.height) request.insert_image!.height = op.height;
-                    break;
-                    
-                case 'table':
-                    request = {
-                        insert_table: {
-                            rows: op.rows || 3,
-                            cols: op.cols || 3,
-                            location: { index: currentIndex }
-                        }
-                    };
-                    break;
-                    
-                default:
-                    throw new Error(`未知操作类型：${(op as any).type}`);
-            }
-
-            const body: Record<string, unknown> = {
-                docid: readString(docId),
-                requests: [request],
-                version: currentVersion,
-            };
-
-            const json = await this.postWecomDocApi({
-                path: "/cgi-bin/wedoc/document/batch_update",
-                actionLabel: `batchUpdateDocSmart (${op.type})`,
-                agent,
-                body,
-            }) as BatchUpdateDocResponse;
-
-            results.push({ type: op.type, success: true });
-            currentIndex++;
+        // version is optional but recommended for concurrency control
+        if (version !== undefined && version !== null) {
+            body.version = Number(version);
         }
-
-        return {
-            raw: { errcode: 0, errmsg: "ok", results },
-            executedCount: results.length
-        };
-    }
-
-    /**
-     * 高级插入文本方法
-     * 自动处理段落创建和文本插入
-     * 
-     * @param params 
-     * @param params.agent - 代理账号
-     * @param params.docId - 文档 ID
-     * @param params.afterIndex - 在哪个索引位置后插入（从 0 开始）
-     * @param params.text - 要插入的文本（支持多行）
-     * @param params.createParagraphs - 是否自动为每行创建段落（默认 true）
-     */
-    async insertTextSmart(params: {
-        agent: ResolvedAgentAccount;
-        docId: string;
-        afterIndex: number;
-        text: string;
-        createParagraphs?: boolean;
-    }) {
-        const { agent, docId, afterIndex, text, createParagraphs = true } = params;
         
-        // 获取最新文档结构
-        const content = await this.getDocContent({ agent, docId });
-        const version = content.version;
-        
-        if (createParagraphs) {
-            // 按行分割文本
-            const lines = text.split('\n').filter(line => line.trim() !== '');
-            let currentIndex = afterIndex + 1;
-            
-            for (const line of lines) {
-                // 1. 先创建空段落
-                await this.updateDocContent({
-                    agent,
-                    docId,
-                    requests: [{ insert_paragraph: { location: { index: currentIndex } } }],
-                    version,
-                    smartMode: true,
-                });
-                
-                // 2. 在新段落中插入文本
-                await this.updateDocContent({
-                    agent,
-                    docId,
-                    requests: [{ insert_text: { location: { index: currentIndex }, text: line } }],
-                    version: undefined,  // smartMode 会自动获取最新版本
-                    smartMode: true,
-                });
-                
-                currentIndex++;
-            }
-            
-            return { insertedLines: lines.length };
-        } else {
-            // 直接插入文本（不创建新段落）
-            await this.updateDocContent({
-                agent,
-                docId,
-                requests: [{ insert_text: { location: { index: afterIndex + 1 }, text } }],
-                version,
-                smartMode: true,
-            });
-            
-            return { insertedText: text };
-        }
-    }
-
-    /**
-     * 插入图片（自动创建空段落）
-     */
-    async insertImageSmart(params: {
-        agent: ResolvedAgentAccount;
-        docId: string;
-        afterIndex: number;
-        imageId: string;
-        width?: number;
-        height?: number;
-    }) {
-        const { agent, docId, afterIndex, imageId, width, height } = params;
-        
-        // 1. 先创建空段落
-        const content = await this.getDocContent({ agent, docId });
-        const paragraphIndex = afterIndex + 1;
-        
-        await this.updateDocContent({
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/document/batch_update",
+            actionLabel: "update_doc_content",
             agent,
-            docId,
-            requests: [{ insert_paragraph: { location: { index: paragraphIndex } } }],
-            version: content.version,
-            smartMode: true,
-        });
-        
-        // 2. 在空段落中插入图片
-        const imageRequest: UpdateRequest = {
-            insert_image: {
-                image_id: imageId,
-                location: { index: paragraphIndex },
-            }
-        };
-        
-        if (width) imageRequest.insert_image!.width = width;
-        if (height) imageRequest.insert_image!.height = height;
-        
-        await this.updateDocContent({
-            agent,
-            docId,
-            requests: [imageRequest],
-            version: undefined,
-            smartMode: true,
-        });
-        
-        return { inserted: true, imageId };
+            body,
+        }) as BatchUpdateDocResponse;
+        return { raw: json };
     }
 
     // --- Spreadsheet Operations ---
@@ -879,25 +827,32 @@ export class WecomDocClient {
     }) {
         const { agent, docId, sheetId, startRow = 0, startColumn = 0, gridData } = params;
         
+        // Validate required docId
         const normalizedDocId = readString(docId);
         if (!normalizedDocId) {
             throw new Error('docId is required');
         }
         
+        // Validate required sheetId
         const normalizedSheetId = readString(sheetId);
         if (!normalizedSheetId) {
             throw new Error('sheetId is required');
         }
         
+        // Build GridData per official API
+        // gridData.rows[i].values[j] must be: {cell_value: {text} | {link: {text, url}}, cell_format?: {...}}
         const rows = (gridData?.rows || []).map((row: any) => ({
             values: (row.values || []).map((cell: any) => {
+                // If already CellData format, use as-is
                 if (cell && typeof cell === 'object' && cell.cell_value) {
                     return cell;
                 }
+                // Otherwise wrap primitive as CellValue
                 return { cell_value: { text: String(cell ?? '') } };
             })
         }));
         
+        // Validate range limits per API spec
         const rowCount = rows.length;
         const columnCount = rows.length > 0 ? (rows[0].values?.length || 0) : 0;
         const totalCells = rowCount * columnCount;
@@ -918,6 +873,8 @@ export class WecomDocClient {
             rows: rows
         };
         
+        // Build batch_update request per official API
+        // Note: requests array length ≤ 5 per API spec
         const body = {
             docid: normalizedDocId,
             requests: [{
@@ -940,9 +897,13 @@ export class WecomDocClient {
         };
     }
     
+    /**
+     * Build CellFormat object per official API
+     */
     private buildCellFormat(formatData: any): any {
         const textFormat: any = {};
         
+        // Font properties
         if (formatData.font != null) {
             textFormat.font = String(formatData.font);
         }
@@ -961,48 +922,289 @@ export class WecomDocClient {
         if (formatData.underline != null) {
             textFormat.underline = Boolean(formatData.underline);
         }
-        if (formatData.color != null && typeof formatData.color === 'object') {
+        
+        // Color (RGBA)
+        if (formatData.color != null && typeof formatData.color === "object") {
+            const color = formatData.color;
             textFormat.color = {
-                red: Math.min(255, Math.max(0, Number(formatData.color.red ?? 0))),
-                green: Math.min(255, Math.max(0, Number(formatData.color.green ?? 0))),
-                blue: Math.min(255, Math.max(0, Number(formatData.color.blue ?? 0))),
-                alpha: Math.min(255, Math.max(0, Number(formatData.color.alpha ?? 255))),
+                red: Math.min(255, Math.max(0, Number(color.red ?? 0))),
+                green: Math.min(255, Math.max(0, Number(color.green ?? 0))),
+                blue: Math.min(255, Math.max(0, Number(color.blue ?? 0))),
+                alpha: Math.min(255, Math.max(0, Number(color.alpha ?? 255)))
             };
+        }
+        
+        // Return empty object if no format properties
+        if (Object.keys(textFormat).length === 0) {
+            return null;
         }
         
         return { text_format: textFormat };
     }
 
-    async uploadDocImage(params: { agent: ResolvedAgentAccount; docId: string; filePath: string }) {
-        const { agent, docId, filePath } = params;
+    async getSheetData(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; range: string }) {
+        const { agent, docId, sheetId, range } = params;
+        const body = { docid: readString(docId), sheet_id: readString(sheetId), range: readString(range) };
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/spreadsheet/get_sheet_range_data",
+            actionLabel: "get_sheet_range_data",
+            agent, body,
+        });
+        return { raw: json, data: json };
+    }
+
+    async modifySheetProperties(params: { agent: ResolvedAgentAccount; docId: string; requests: unknown[] }) {
+        const { agent, docId, requests } = params;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/spreadsheet/batch_update",
+            actionLabel: "spreadsheet_batch_update",
+            agent, body: { docid: readString(docId), requests: readArray(requests) },
+        });
+        return { raw: json, docId: docId };
+    }
+
+    // --- Smart Table Operations ---
+
+    async smartTableOperate(params: { agent: ResolvedAgentAccount; docId: string; operation: string; bodyData: any }) {
+        const { agent, docId, operation, bodyData } = params;
+        const body = { docid: readString(docId), ...readObject(bodyData) };
+        const path = `/cgi-bin/wedoc/smartsheet/${operation}`;
+        const json = await this.postWecomDocApi({
+            path,
+            actionLabel: `smartsheet_${operation}`,
+            agent, body,
+        });
+        return { raw: json, docId };
+    }
+
+    async smartTableGetSheets(params: { agent: ResolvedAgentAccount; docId: string }) {
+        const { agent, docId } = params;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/get_sheet",
+            actionLabel: "smartsheet_get_sheet",
+            agent,
+            body: { docid: readString(docId) },
+        });
+        return {
+            raw: json,
+            sheets: readArray(json.sheet_list),
+        };
+    }
+
+    async smartTableAddSheet(params: { agent: ResolvedAgentAccount; docId: string; title: string; index?: number }) {
+        const { agent, docId, title, index } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_sheet", bodyData: { properties: { title, index } } });
+    }
+
+    async smartTableDelSheet(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string }) {
+        const { agent, docId, sheetId } = params;
+        return this.smartTableOperate({ agent, docId, operation: "delete_sheet", bodyData: { sheet_id: sheetId } });
+    }
+
+    async smartTableUpdateSheet(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; title: string }) {
+        const { agent, docId, sheetId, title } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_sheet", bodyData: { properties: { sheet_id: sheetId, title } } });
+    }
+    async smartTableAddView(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; view_title: string; view_type: string; property_gantt?: any; property_calendar?: any }) {
+        const { agent, docId, sheetId, view_title, view_type, property_gantt, property_calendar } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_view", bodyData: { sheet_id: sheetId, view_title, view_type, property_gantt, property_calendar } });
+    }
+
+    async smartTableUpdateView(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; view_id: string; view_title?: string; property_gantt?: any; property_calendar?: any }) {
+        const { agent, docId, sheetId, view_id, view_title, property_gantt, property_calendar } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_view", bodyData: { sheet_id: sheetId, view_id, view_title, property_gantt, property_calendar } });
+    }
+
+    async smartTableDelView(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; view_ids: string[] }) {
+        const { agent, docId, sheetId, view_ids } = params;
+        return this.smartTableOperate({ agent, docId, operation: "delete_views", bodyData: { sheet_id: sheetId, view_ids } });
+    }
+
+    async smartTableAddFields(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; fields: any[] }) {
+        const { agent, docId, sheetId, fields } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_fields", bodyData: { sheet_id: sheetId, fields } });
+    }
+
+    async smartTableDelFields(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; field_ids: string[] }) {
+        const { agent, docId, sheetId, field_ids } = params;
+        return this.smartTableOperate({ agent, docId, operation: "delete_fields", bodyData: { sheet_id: sheetId, field_ids } });
+    }
+
+    async smartTableUpdateFields(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; fields: any[] }) {
+        const { agent, docId, sheetId, fields } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_fields", bodyData: { sheet_id: sheetId, fields } });
+    }
+
+    async smartTableAddGroup(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; name: string; children?: string[] }) {
+        const { agent, docId, sheetId, name, children } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_field_group", bodyData: { sheet_id: sheetId, name, children } });
+    }
+
+    async smartTableDelGroup(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; field_group_id: string }) {
+        const { agent, docId, sheetId, field_group_id } = params;
+        return this.smartTableOperate({ agent, docId, operation: "delete_field_group", bodyData: { sheet_id: sheetId, field_group_id } });
+    }
+
+    async smartTableUpdateGroup(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; field_group_id: string; name?: string; children?: string[] }) {
+        const { agent, docId, sheetId, field_group_id, name, children } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_field_group", bodyData: { sheet_id: sheetId, field_group_id, name, children } });
+    }
+
+    async smartTableGetGroups(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string }) {
+        const { agent, docId, sheetId } = params;
+        return this.smartTableOperate({ agent, docId, operation: "get_field_groups", bodyData: { sheet_id: sheetId } });
+    }
+
+    async smartTableAddExternalRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; records: any[] }) {
+        const { agent, docId, sheetId, records } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_external_records", bodyData: { sheet_id: sheetId, records } });
+    }
+
+    async smartTableUpdateExternalRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; records: any[] }) {
+        const { agent, docId, sheetId, records } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_external_records", bodyData: { sheet_id: sheetId, records } });
+    }
+
+    async smartTableAddRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; records: any[] }) {
+        const { agent, docId, sheetId, records } = params;
+        return this.smartTableOperate({ agent, docId, operation: "add_records", bodyData: { sheet_id: sheetId, records } });
+    }
+
+    async smartTableUpdateRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; records: any[] }) {
+        const { agent, docId, sheetId, records } = params;
+        return this.smartTableOperate({ agent, docId, operation: "update_records", bodyData: { sheet_id: sheetId, records } });
+    }
+
+    async smartTableDelRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; record_ids: string[] }) {
+        const { agent, docId, sheetId, record_ids } = params;
+        return this.smartTableOperate({ agent, docId, operation: "delete_records", bodyData: { sheet_id: sheetId, record_ids } });
+    }
+
+    async smartTableGetRecords(params: { agent: ResolvedAgentAccount; docId: string; sheetId: string; record_ids?: string[]; offset?: number; limit?: number }) {
+        const { agent, docId, sheetId, record_ids, offset, limit } = params;
+        return this.smartTableOperate({ agent, docId, operation: "get_records", bodyData: { sheet_id: sheetId, record_ids, offset, limit } });
+    }
+
+    // --- Smartsheet Content Permissions ---
+
+    async smartTableGetSheetPriv(params: { agent: ResolvedAgentAccount; docId: string; type: number; rule_id_list?: number[] }) {
+        const { agent, docId, type, rule_id_list } = params;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/content_priv/get_sheet_priv",
+            actionLabel: "smartsheet_get_sheet_priv",
+            agent,
+            body: { docid: readString(docId), type, rule_id_list },
+        });
+        return { raw: json };
+    }
+
+    async smartTableUpdateSheetPriv(params: { agent: ResolvedAgentAccount; docId: string; type: number; rule_id?: number; name?: string; priv_list: any[] }) {
+        const { agent, docId, type, rule_id, name, priv_list } = params;
+        const body: any = { docid: readString(docId), type, priv_list };
+        if (rule_id !== undefined) body.rule_id = rule_id;
+        if (name !== undefined) body.name = name;
+        
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/content_priv/update_sheet_priv",
+            actionLabel: "smartsheet_update_sheet_priv",
+            agent,
+            body,
+        });
+        return { raw: json };
+    }
+
+    async smartTableCreateRule(params: { agent: ResolvedAgentAccount; docId: string; name: string }) {
+        const { agent, docId, name } = params;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/content_priv/create_rule",
+            actionLabel: "smartsheet_create_rule",
+            agent,
+            body: { docid: readString(docId), name },
+        });
+        return { raw: json, rule_id: json.rule_id };
+    }
+
+    async smartTableModRuleMember(params: { agent: ResolvedAgentAccount; docId: string; rule_id: number; add_member_range?: any; del_member_range?: any }) {
+        const { agent, docId, rule_id, add_member_range, del_member_range } = params;
+        const body: any = { docid: readString(docId), rule_id };
+        if (add_member_range) body.add_member_range = add_member_range;
+        if (del_member_range) body.del_member_range = del_member_range;
+
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/content_priv/mod_rule_member",
+            actionLabel: "smartsheet_mod_rule_member",
+            agent,
+            body,
+        });
+        return { raw: json };
+    }
+
+    async smartTableDeleteRule(params: { agent: ResolvedAgentAccount; docId: string; rule_id_list: number[] }) {
+        const { agent, docId, rule_id_list } = params;
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/smartsheet/content_priv/delete_rule",
+            actionLabel: "smartsheet_delete_rule",
+            agent,
+            body: { docid: readString(docId), rule_id_list },
+        });
+        return { raw: json };
+    }
+
+    // --- Advanced Account Management ---
+
+    async assignDocAdvancedAccount(params: { agent: ResolvedAgentAccount; userid_list: string[] }) {
+        const { agent, userid_list } = params;
+        return this.postWecomDocApi({
+            path: "/cgi-bin/meeting/vip/submit_batch_add_job",
+            actionLabel: "assign_advanced_account",
+            agent,
+            body: { userid_list },
+        });
+    }
+
+    async cancelDocAdvancedAccount(params: { agent: ResolvedAgentAccount; userid_list: string[] }) {
+        const { agent, userid_list } = params;
+        return this.postWecomDocApi({
+            path: "/cgi-bin/meeting/vip/submit_batch_del_job",
+            actionLabel: "cancel_advanced_account",
+            agent,
+            body: { userid_list },
+        });
+    }
+
+    async getDocAdvancedAccountList(params: { agent: ResolvedAgentAccount; offset?: number; limit?: number }) {
+        const { agent, offset, limit } = params;
+        return this.postWecomDocApi({
+            path: "/cgi-bin/meeting/vip/get_vip_user_list",
+            actionLabel: "get_advanced_account_list",
+            agent,
+            body: { cursor: offset ? String(offset) : undefined, limit: limit ?? 100 },
+        });
+    }
+
+    // --- Material Management ---
+
+    async uploadDocImage(params: { agent: ResolvedAgentAccount; docId: string; base64_content: string }) {
+        const { agent, docId, base64_content } = params;
         const normalizedDocId = readString(docId);
         if (!normalizedDocId) throw new Error("docId required");
         
-        const fileData = await fs.promises.readFile(filePath);
-        const base64 = fileData.toString('base64');
-        const fileName = filePath.split('/').pop() || 'image.png';
-        
-        const formData = new FormData();
-        formData.append('docid', normalizedDocId);
-        formData.append('media', new Blob([fileData], { type: 'image/png' }), fileName);
-        
-        const token = await getAccessToken(agent);
-        const url = `https://qyapi.weixin.qq.com/cgi-bin/wedoc/upload_doc_image?access_token=${encodeURIComponent(token)}`;
-        const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
-        
-        const res = await wecomFetch(url, {
-            method: 'POST',
-            body: formData,
-        }, { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-        
-        const json = await parseJsonResponse(res, 'upload_doc_image');
+        const json = await this.postWecomDocApi({
+            path: "/cgi-bin/wedoc/image_upload",
+            actionLabel: "upload_doc_image",
+            agent,
+            body: {
+                docid: normalizedDocId,
+                base64_content: base64_content
+            }
+        });
         
         return {
             raw: json,
             url: readString(json.url),
-            width: Number(json.width) || 0,
-            height: Number(json.height) || 0,
-            size: Number(json.size) || 0,
+            height: json.height,
+            width: json.width,
+            size: json.size
         };
     }
 }
