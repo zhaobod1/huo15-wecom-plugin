@@ -491,9 +491,20 @@ export class WecomDocClient {
      * - 原子性：一个失败则全部回滚
      * - version 与最新版本差值不能超过 100
      * 
+     * ⚠️ 重要限制（经过实际测试验证）：
+     * - insert_text 必须指向已有 Run 元素的位置，不能在空段落执行
+     * - 批量操作中，所有索引基于请求发送时的文档快照
+     * - 不能"先创建段落再插入文本"（新段落在快照中不存在）
+     * - 批量插入多个段落后，后续 insert_text 的索引需要精确计算
+     * 
      * 使用模式：
-     * 1. batchMode=false（默认）：逐个执行，每个操作前自动获取最新版本，可靠性高
-     * 2. batchMode=true：一次性批量执行，需要用户确保索引计算正确，性能更好
+     * 1. batchMode=false（默认）：逐个执行，每个操作前自动获取最新版本，可靠性高 ✅ 推荐
+     * 2. batchMode=true：一次性批量执行，需要确保索引计算正确，仅适用于简单场景 ⚠️ 慎用
+     * 
+     * 最佳实践：
+     * - 创建带内容的文档：使用 createDoc + init_content 参数（最可靠）
+     * - 更新现有文档：使用 batchMode=false 顺序模式
+     * - 批量追加文本：确保所有 insert_text 的索引指向已有 Run 元素
      */
     async updateDocContent(params: { 
         agent: ResolvedAgentAccount; 
