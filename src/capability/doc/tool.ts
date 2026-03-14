@@ -906,8 +906,6 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         });
                     }
                     case "edit_sheet_data": {
-                        // Pass through gridData or values to client.ts for normalization
-                        // Normalization happens once in client.ts to avoid duplication
                         const result = await docClient.editSheetData({
                             agent: account,
                             docId: params.docId,
@@ -915,7 +913,6 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             startRow: params.startRow ?? 0,
                             startColumn: params.startColumn ?? 0,
                             gridData: params.gridData,
-                            values: params.values, // Pass raw values for client.ts to normalize
                         });
                         return buildToolResult({
                             ok: true,

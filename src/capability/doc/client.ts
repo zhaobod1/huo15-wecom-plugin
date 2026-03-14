@@ -699,61 +699,62 @@ export class WecomDocClient {
     
     /**
      * Normalize cell data to CellData format per official API
+     * Official format: {cell_value: {text: string} | {link: {text, url}}, cell_format?: {text_format: {...}}}
      */
     private normalizeCell(cell: any): any {
-        let cellValue: any;
-        let cellFormat: any;
-        
-        // If cell already has cell_value (already normalized), return as-is
-        if (cell && typeof cell === "object" && cell.cell_value) {
+        // If cell already has cell_value (already in CellData format), return as-is
+        if (cell && typeof cell === "object" && 'cell_value' in cell) {
             return cell;
         }
         
-        // Handle string cells
+        // If cell is a string, wrap it
         if (typeof cell === "string") {
-            cellValue = { text: cell };
-        }
-        // Handle null/undefined
-        else if (!cell || typeof cell !== "object") {
-            cellValue = { text: String(cell ?? "") };
-        }
-        else {
-            // Handle cell with link (official API format)
-            if (cell.link && typeof cell.link === "object") {
-                cellValue = {
-                    link: {
-                        text: String(cell.link.text ?? cell.text ?? ""),
-                        url: String(cell.link.url ?? cell.url ?? "")
-                    }
-                };
-            }
-            // Handle cell with text only (official API format)
-            else if (cell.text != null) {
-                cellValue = { text: String(cell.text) };
-            }
-            // Fallback
-            else {
-                cellValue = { text: String(cell ?? "") };
-            }
-            
-            // Handle cell_format if provided
-            if (cell.cell_format && typeof cell.cell_format === "object") {
-                cellFormat = this.buildCellFormat(cell.cell_format);
-            }
-            // Handle inline format properties - only include defined values
-            else if (cell.font !== undefined || cell.font_size !== undefined || 
-                     cell.bold !== undefined || cell.italic !== undefined || 
-                     cell.strikethrough !== undefined || cell.underline !== undefined || 
-                     cell.color !== undefined) {
-                cellFormat = this.buildCellFormat(cell);
-            }
+            return { cell_value: { text: cell } };
         }
         
-        // Return CellData format per official API
-        const cellData: any = { cell_value: cellValue };
-        if (cellFormat) {
-            cellData.cell_format = cellFormat;
+        // If cell is null/undefined, return empty text
+        if (!cell) {
+            return { cell_value: { text: "" } };
         }
+        
+        // If cell is a number, convert to string
+        if (typeof cell === "number") {
+            return { cell_value: { text: String(cell) } };
+        }
+        
+        // Cell is an object - check if it's already a CellValue (has text or link)
+        if (cell.text != null || cell.link) {
+            // This is a CellValue, wrap it in CellData
+            const cellData: any = { cell_value: cell };
+            if (cell.cell_format) {
+                cellData.cell_format = this.buildCellFormat(cell.cell_format);
+            }
+            return cellData;
+        }
+        
+        // Check if it has inline format properties
+        const hasFormat = cell.font !== undefined || cell.font_size !== undefined || 
+                         cell.bold !== undefined || cell.italic !== undefined || 
+                         cell.strikethrough !== undefined || cell.underline !== undefined || 
+                         cell.color !== undefined;
+        
+        // Build cell value
+        let cellValue: any = { text: String(cell.text ?? cell ?? "") };
+        if (cell.link && typeof cell.link === "object") {
+            cellValue = {
+                link: {
+                    text: String(cell.link.text ?? ""),
+                    url: String(cell.link.url ?? "")
+                }
+            };
+        }
+        
+        // Build CellData
+        const cellData: any = { cell_value: cellValue };
+        if (hasFormat) {
+            cellData.cell_format = this.buildCellFormat(cell);
+        }
+        
         return cellData;
     }
     
