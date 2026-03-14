@@ -488,10 +488,30 @@ export const wecomDocToolSchema = {
                 },
                 init_content: {
                     type: "array",
-                    description: "可选：初始文档内容（段落列表）。插件会自动处理段落分隔，确保标题和正文分离。",
+                    description: "可选：初始文档内容（段落列表）。支持纯文本字符串或图片对象。插件会自动处理段落分隔，确保标题和正文分离。",
                     items: {
-                        type: "string",
-                        description: "段落内容",
+                        oneOf: [
+                            {
+                                type: "string",
+                                description: "段落文本内容",
+                            },
+                            {
+                                type: "object",
+                                additionalProperties: false,
+                                required: ["type", "url"],
+                                properties: {
+                                    type: {
+                                        type: "string",
+                                        const: "image",
+                                        description: "内容类型：image 表示图片",
+                                    },
+                                    url: {
+                                        type: "string",
+                                        description: "图片 URL（支持 http/https 链接）",
+                                    },
+                                },
+                            },
+                        ],
                     },
                 },
             },
