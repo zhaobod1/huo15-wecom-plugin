@@ -1052,7 +1052,7 @@ export const wecomDocToolSchema = {
             additionalProperties: false,
             required: ["action", "docId", "requests"],
             properties: {
-                action: { const: "modify_sheet_properties" },
+                action: { const: "batch_update" },
                 accountId: accountIdProperty,
                 docId: {
                     ...docIdProperty,
@@ -1062,7 +1062,7 @@ export const wecomDocToolSchema = {
                     type: "array",
                     minItems: 1,
                     maxItems: 5,
-                    description: "修改属性请求列表，必须遵循企业微信 modify_sheet_properties 定义",
+                    description: "批量更新操作列表（单次最多 5 个操作，详见 UpdateRequest）",
                     items: {
                         type: "object",
                         oneOf: [
