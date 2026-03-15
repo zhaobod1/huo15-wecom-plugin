@@ -39,14 +39,14 @@ export interface ScopedWecomTarget {
  *    - 纯数字 -> 默认 User ID (用户)，避免误判部门导致 81013 错误
  *    - 其他 -> User ID (用户)
  * 
- * @param raw - The raw target string (e.g. "party:1", "zhangsan", "wecom:user:0404777")
+ * @param raw - The raw target string (e.g. "party:1", "zhangsan", "wecom:user:xxx")
  */
 export function resolveWecomTarget(raw: string | undefined, options?: { preferUserForDigits?: boolean }): WecomTarget | undefined {
     if (!raw?.trim()) return undefined;
 
     const trimmed = raw.trim();
 
-    // 1. 先检查原始字符串中的类型前缀（处理 user:0404777 无前缀格式）
+    // 1. 先检查原始字符串中的类型前缀（处理 user:xxx 无前缀格式）
     // 这样即使没有 wecom: 前缀，也能正确识别类型
     if (/^user:/i.test(trimmed)) {
         return { touser: trimmed.replace(/^user:/i, "").trim() };
@@ -64,7 +64,7 @@ export function resolveWecomTarget(raw: string | undefined, options?: { preferUs
     // 2. Remove standard namespace prefixes (移除标准命名空间前缀)
     let clean = trimmed.replace(/^(wecom-agent|wecom|wechatwork|wework|qywx):/i, "");
 
-    // 3. 再次检查类型前缀（处理 wecom:user:0404777 格式）
+    // 3. 再次检查类型前缀（处理 wecom:user:xxx 格式）
     if (/^user:/i.test(clean)) {
         return { touser: clean.replace(/^user:/i, "").trim() };
     }
@@ -90,8 +90,11 @@ export function resolveWecomTarget(raw: string | undefined, options?: { preferUs
     // 原因：1) 定时任务可能直接配置 to: "1" 发送给根部门
     //      2) 企业微信官方文档示例使用纯数字表示部门
     //      3) 用户 ID 应该使用显式前缀 "user:xxx"
-    // 如果需要发送给用户，请使用 "user:0404777" 格式
+    // 但如果 preferUserForDigits 为 true 则视为 User ID（用于 agent scoped 场景）
     if (/^\d+$/.test(clean)) {
+        if (options?.preferUserForDigits) {
+            return { touser: clean };
+        }
         return { toparty: clean };
     }
 
