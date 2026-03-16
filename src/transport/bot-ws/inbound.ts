@@ -55,6 +55,28 @@ export function mapBotWsFrameToInboundEvent(params: {
   const peerId = peerKind === "group" ? body.chatid ?? senderId : senderId;
   const inboundKind = resolveInboundKind(body);
 
+  let attachments: UnifiedInboundEvent["attachments"];
+  if (body.msgtype === "image") {
+    attachments = [{ name: "image", remoteUrl: (body as any).image?.url, aesKey: (body as any).image?.aeskey }];
+  } else if (body.msgtype === "file") {
+    attachments = [{ name: "file", remoteUrl: (body as any).file?.url, aesKey: (body as any).file?.aeskey }];
+  } else if (body.msgtype === "mixed") {
+    const items = (body as any).mixed?.msg_item;
+    if (Array.isArray(items)) {
+      attachments = [];
+      for (const item of items) {
+        if (item.msgtype === "image" && item.image?.url) {
+          attachments.push({ name: "image", remoteUrl: item.image.url, aesKey: item.image.aeskey });
+        } else if (item.msgtype === "file" && item.file?.url) {
+          attachments.push({ name: "file", remoteUrl: item.file.url, aesKey: item.file.aeskey });
+        }
+      }
+      if (attachments.length === 0) {
+        attachments = undefined;
+      }
+    }
+  }
+
   return {
     accountId: account.accountId,
     capability: "bot",
@@ -89,10 +111,6 @@ export function mapBotWsFrameToInboundEvent(params: {
         envelopeType: "ws",
       },
     },
-    attachments: body.msgtype === "image"
-      ? [{ name: "image", remoteUrl: (body as any).image?.url, aesKey: (body as any).image?.aeskey }]
-      : body.msgtype === "file"
-        ? [{ name: "file", remoteUrl: (body as any).file?.url, aesKey: (body as any).file?.aeskey }]
-        : undefined,
+    attachments,
   };
 }
