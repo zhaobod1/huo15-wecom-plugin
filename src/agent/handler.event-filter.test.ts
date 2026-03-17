@@ -49,6 +49,17 @@ describe("shouldProcessAgentInboundMessage", () => {
         expect(missingSender.reason).toBe("missing_sender");
     });
 
+
+    it("allows group chat messages when sender id is missing", () => {
+        const groupWithoutSender = shouldProcessAgentInboundMessage({
+            msgType: "file",
+            fromUser: "   ",
+            chatId: "wrbchat_123",
+        });
+        expect(groupWithoutSender.shouldProcess).toBe(true);
+        expect(groupWithoutSender.reason).toBe("missing_sender_but_group_chat");
+    });
+
     it("allows normal user text message processing", () => {
         const normalMessage = shouldProcessAgentInboundMessage({
             msgType: "text",
