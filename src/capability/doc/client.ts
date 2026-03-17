@@ -563,7 +563,7 @@ export class WecomDocClient {
         // Validate timed_repeat_info and timed_finish are mutually exclusive
         const formSetting = formInfo.form_setting || {};
         if (formSetting.timed_repeat_info?.enable && formSetting.timed_finish) {
-            console.warn("警告：timed_finish 与 timed_repeat_info 互斥，若都填优先定时重复");
+            throw new Error("timed_repeat_info 与 timed_finish 互斥，不能同时设置");
         }
         
         // Validate timed_repeat_info.enable=true requires fill_in_range
@@ -688,7 +688,14 @@ export class WecomDocClient {
             // Validate timed_repeat_info and timed_finish are mutually exclusive
             const formSetting = formInfo.form_setting;
             if (formSetting.timed_repeat_info?.enable && formSetting.timed_finish) {
-                console.warn("警告：timed_finish 与 timed_repeat_info 互斥，若都填优先定时重复");
+                throw new Error("timed_repeat_info 与 timed_finish 互斥，不能同时设置");
+            }
+            
+            // Validate timed_repeat_info.enable=true requires fill_in_range
+            if (formSetting.timed_repeat_info?.enable) {
+                if (!formSetting.fill_in_range || (!formSetting.fill_in_range.userids?.length && !formSetting.fill_in_range.departmentids?.length)) {
+                    throw new Error("timed_repeat_info 开启时，fill_in_range 必填（需指定 userids 或 departmentids）");
+                }
             }
             
             payload.form_info = { form_setting: formSetting };
@@ -974,8 +981,31 @@ export class WecomDocClient {
             // Official API limit: ≤5 operations per batch
             const MAX_OPERATIONS = 5;
             
+            // Copy sheetId into each request if not already present
+            const normalizedRequests = requests.map((req: any) => {
+                if (req.update_range_request && !req.update_range_request.sheet_id) {
+                    return {
+                        ...req,
+                        update_range_request: {
+                            ...req.update_range_request,
+                            sheet_id: normalizedSheetId,
+                        },
+                    };
+                }
+                if (req.delete_dimension_request && !req.delete_dimension_request.sheet_id) {
+                    return {
+                        ...req,
+                        delete_dimension_request: {
+                            ...req.delete_dimension_request,
+                            sheet_id: normalizedSheetId,
+                        },
+                    };
+                }
+                return req;
+            });
+            
             // Validate each request
-            requests.forEach((req: any, index: number) => {
+            normalizedRequests.forEach((req: any, index: number) => {
                 if (req.update_range_request?.grid_data?.rows) {
                     const rows = req.update_range_request.grid_data.rows;
                     const rowCount = rows.length;
@@ -989,13 +1019,13 @@ export class WecomDocClient {
                 }
             });
             
-            if (requests.length > MAX_OPERATIONS) {
-                throw new Error(`单次批量更新最多${MAX_OPERATIONS}个操作，当前：${requests.length}`);
+            if (normalizedRequests.length > MAX_OPERATIONS) {
+                throw new Error(`单次批量更新最多${MAX_OPERATIONS}个操作，当前：${normalizedRequests.length}`);
             }
             
             const body = {
                 docid: normalizedDocId,
-                requests: requests
+                requests: normalizedRequests
             };
             
             const json = await this.postWecomDocApi({
@@ -1276,7 +1306,7 @@ export class WecomDocClient {
             throw new Error("view_ids 必须是非空数组");
         }
         
-        return this.postWecomDocApi({
+        const json = await this.postWecomDocApi({
             path: "/cgi-bin/wedoc/smartsheet/delete_views",
             actionLabel: "smartsheet_del_view",
             agent,
@@ -1286,6 +1316,7 @@ export class WecomDocClient {
                 view_ids: view_ids,
             },
         });
+        return { raw: json };
     }
 
     async smartTableGetViews(params: { 
@@ -1423,7 +1454,7 @@ export class WecomDocClient {
             throw new Error("field_ids 必须是非空数组");
         }
         
-        return this.postWecomDocApi({
+        const json = await this.postWecomDocApi({
             path: "/cgi-bin/wedoc/smartsheet/delete_fields",
             actionLabel: "smartsheet_del_fields",
             agent,
@@ -1433,6 +1464,7 @@ export class WecomDocClient {
                 field_ids: field_ids,
             },
         });
+        return { raw: json };
     }
 
     async smartTableGetFields(params: { 

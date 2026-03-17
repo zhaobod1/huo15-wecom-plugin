@@ -915,8 +915,8 @@ export const wecomDocToolSchema = {
         },
         {
             type: "object",
-            additionalProperties: false,
-            required: ["action", "docId", "sheetId", "gridData"],
+            additionalProperties: true,
+            required: ["action", "docId", "sheetId"],
             properties: {
                 action: { const: "edit_sheet_data" },
                 accountId: accountIdProperty,
@@ -941,7 +941,7 @@ export const wecomDocToolSchema = {
                 },
                 gridData: {
                     type: "object",
-                    description: "表格数据，按企业微信官方 GridData 定义填写",
+                    description: "表格数据（可选），按企业微信官方 GridData 定义填写",
                     additionalProperties: false,
                     required: ["rows"],
                     properties: {
@@ -1455,27 +1455,6 @@ export const wecomDocToolSchema = {
         },
         {
             type: "object",
-            additionalProperties: true,
-            required: ["action", "docId", "sheetId"],
-            properties: {
-                action: { const: "smartsheet_get_records" },
-                accountId: accountIdProperty,
-                docId: docIdProperty,
-                sheetId: { type: "string", description: "子表 ID" },
-                view_id: { type: "string", description: "可选：视图 ID" },
-                record_ids: { type: "array", items: { type: "string" }, description: "可选：指定记录 ID 列表" },
-                key_type: { type: "string", enum: ["CELL_VALUE_KEY_TYPE_FIELD_TITLE", "CELL_VALUE_KEY_TYPE_FIELD_ID"], description: "可选：返回记录中单元格的 key 类型" },
-                field_titles: { type: "array", items: { type: "string" }, description: "可选：返回指定列（字段标题）" },
-                field_ids: { type: "array", items: { type: "string" }, description: "可选：返回指定列（字段 ID）" },
-                sort: { type: "array", items: { type: "object" }, description: "可选：对返回记录进行排序" },
-                offset: { type: "integer", description: "可选：偏移量，初始值为 0" },
-                limit: { type: "integer", description: "可选：分页大小，最大 1000" },
-                ver: { type: "integer", description: "可选：版本号" },
-                filter_spec: { type: "object", description: "可选：过滤设置，不支持和 sort 一起使用" },
-            },
-        },
-        {
-            type: "object",
             additionalProperties: false,
             required: ["action", "docId", "type"],
             properties: {
@@ -1489,11 +1468,7 @@ export const wecomDocToolSchema = {
         {
             type: "object",
             additionalProperties: false,
-            required: ["action", "docId", "priv_list"],
-            anyOf: [
-                { required: ["rule_id"] },
-                { required: ["name"] }
-            ],
+            required: ["action", "docId", "type", "priv_list"],
             properties: {
                 action: { const: "smartsheet_update_sheet_priv" },
                 accountId: accountIdProperty,
@@ -1502,6 +1477,13 @@ export const wecomDocToolSchema = {
                 rule_id: { type: "integer", description: "当 type=2 时必填（额外权限规则 ID）" },
                 name: { type: "string", description: "权限规则名称（仅 type=2 时有效）" },
                 priv_list: privListSchema,
+            },
+            if: { properties: { type: { const: 2 } } },
+            then: {
+                anyOf: [
+                    { required: ["rule_id"] },
+                    { required: ["name"] }
+                ]
             },
         },
         {
