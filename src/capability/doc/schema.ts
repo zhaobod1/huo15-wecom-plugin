@@ -1498,7 +1498,7 @@ export const wecomDocToolSchema = {
             properties: {
                 action: { const: "doc_get_advanced_account_list" },
                 accountId: accountIdProperty,
-                offset: { type: "integer" },
+                cursor: { type: "integer", description: "分页游标（从 0 开始）" },
                 limit: { type: "integer" },
             },
         },

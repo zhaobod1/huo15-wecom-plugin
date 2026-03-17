@@ -391,19 +391,23 @@ export class WecomDocClient {
             // Need to check current auth status
             try {
                 const currentAuth = await this.getDocAuth({ agent, docId });
-                const viewerUserIds = new Set(
-                    (currentAuth.docMembers || [])
-                        .filter((m: any) => m.type === 1 && m.userid)
-                        .map((m: any) => m.userid)
-                );
-                const newCollaboratorUserIds = normalizeDocMemberEntryList(collaborators)
-                    .map(e => e.userid)
-                    .filter(Boolean) as string[];
+                // Build a map of viewer entries with their full structure (preserving type and other fields)
+                const viewerMap = new Map<string, any>();
+                (currentAuth.docMembers || [])
+                    .filter((m: any) => m.userid)
+                    .forEach((m: any) => viewerMap.set(m.userid, m));
                 
-                // Auto-add viewers who are being promoted to collaborators
-                const autoRemoveViewers = newCollaboratorUserIds
-                    .filter(userid => viewerUserIds.has(userid))
-                    .map(userid => ({ userid, type: 1 }));
+                // Normalize new collaborators to get their userids
+                const newCollaboratorEntries = normalizeDocMemberEntryList(collaborators);
+                
+                // Auto-add viewers who are being promoted to collaborators, preserving their original structure
+                const autoRemoveViewers = newCollaboratorEntries
+                    .filter(entry => entry.userid && viewerMap.has(entry.userid))
+                    .map(entry => {
+                        // Preserve the original viewer's full structure (type, userid, etc.)
+                        const originalViewer = viewerMap.get(entry.userid!);
+                        return { ...originalViewer };
+                    });
                 
                 if (autoRemoveViewers.length > 0) {
                     finalRemoveViewers = autoRemoveViewers;
@@ -1346,13 +1350,13 @@ export class WecomDocClient {
         });
     }
 
-    async getDocAdvancedAccountList(params: { agent: ResolvedAgentAccount; offset?: number; limit?: number }) {
-        const { agent, offset, limit } = params;
+    async getDocAdvancedAccountList(params: { agent: ResolvedAgentAccount; cursor?: number; limit?: number }) {
+        const { agent, cursor, limit } = params;
         return this.postWecomDocApi({
             path: "/cgi-bin/meeting/vip/get_vip_user_list",
             actionLabel: "get_advanced_account_list",
             agent,
-            body: { cursor: offset ? String(offset) : undefined, limit: limit ?? 100 },
+            body: { cursor: cursor !== undefined ? String(cursor) : undefined, limit: limit ?? 100 },
         });
     }
 
