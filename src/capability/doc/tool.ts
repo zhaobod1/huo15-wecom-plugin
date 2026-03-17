@@ -420,17 +420,17 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                     return String(item);
                                 };
 
-                                // Step 1: Insert first item (title) at index 0
+                                // Step 1: Insert title at index 0
+                                // Process: insert_paragraph -> get latest content -> insert_text
                                 if (params.init_content[0]) {
                                     const firstItem = params.init_content[0];
                                     console.log(`[wecom-doc] Processing title: ${isImageItem(firstItem) ? 'image' : 'text'}`);
                                     
                                     if (isImageItem(firstItem)) {
-                                        // First item is image - upload first, then insert at index 0
+                                        // First item is image
                                         const imgUrl = getImageUrl(firstItem);
 
                                         try {
-                                            // Upload image to WeCom to get proper image_id
                                             const base64 = await downloadImageAsBase64(imgUrl);
                                             const uploadResult = await docClient.uploadDocImage({
                                                 agent: account,
@@ -438,93 +438,132 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                                 base64_content: base64,
                                             });
 
-                                            // Insert image at index 0 (single operation per API spec)
-                                            const insertResult = await docClient.updateDocContent({
+                                            // Step 1a: Insert paragraph at index 0
+                                            await docClient.updateDocContent({
                                                 agent: account,
                                                 docId: result.docId,
                                                 requests: [{
+                                                    insert_paragraph: {
+                                                        location: { index: 0 }
+                                                    }
+                                                }]
+                                            });
+
+                                            // Step 1b: Get latest content to confirm new index
+                                            const contentAfterParagraph = await docClient.getDocContent({
+                                                agent: account,
+                                                docId: result.docId,
+                                            });
+
+                                            // Step 1c: Insert image at new paragraph index
+                                            await docClient.updateDocContent({
+                                                agent: account,
+                                                docId: result.docId,
+                                                version: contentAfterParagraph.version,
+                                                requests: [{
                                                     insert_image: {
                                                         image_id: uploadResult.url,
-                                                        location: { index: 0 },
+                                                        location: { index: contentAfterParagraph.document.end - 1 },
                                                         width: uploadResult.width,
                                                         height: uploadResult.height
                                                     }
                                                 }]
                                             });
-                                            if (!insertResult.raw || insertResult.raw.errcode !== 0) {
-                                                throw new Error(`Insert first image failed: ${JSON.stringify(insertResult.raw)}`);
-                                            }
                                             console.log(`[wecom-doc] Title image inserted successfully`);
                                         } catch (uploadErr) {
-                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}... url=${imgUrl.substring(0, 50)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
+                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
                                             throw new Error(`First image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
                                         }
                                     } else {
                                         const titleText = getText(firstItem);
                                         console.log(`[wecom-doc] Title text: "${titleText.substring(0, 50)}..." (${titleText.length} chars)`);
                                         
-                                        // Insert title text at index 0 (single operation per API spec)
-                                        const insertResult = await docClient.updateDocContent({
+                                        // Step 1a: Insert paragraph at index 0
+                                        await docClient.updateDocContent({
                                             agent: account,
                                             docId: result.docId,
                                             requests: [{
-                                                insert_text: {
-                                                    text: titleText,
+                                                insert_paragraph: {
                                                     location: { index: 0 }
                                                 }
                                             }]
                                         });
-                                        if (!insertResult.raw || insertResult.raw.errcode !== 0) {
-                                            throw new Error(`Insert title failed: ${JSON.stringify(insertResult.raw)}`);
-                                        }
+
+                                        // Step 1b: Get latest content to confirm new index
+                                        const contentAfterParagraph = await docClient.getDocContent({
+                                            agent: account,
+                                            docId: result.docId,
+                                        });
+
+                                        // Step 1c: Insert text at new paragraph index
+                                        await docClient.updateDocContent({
+                                            agent: account,
+                                            docId: result.docId,
+                                            version: contentAfterParagraph.version,
+                                            requests: [{
+                                                insert_text: {
+                                                    text: titleText,
+                                                    location: { index: contentAfterParagraph.document.end - 1 }
+                                                }
+                                            }]
+                                        });
                                         console.log(`[wecom-doc] Title text inserted successfully`);
 
-                                        // Apply Title Styling (Bold) - separate operation per API spec
+                                        // Step 1d: Apply Title Styling (Bold) - separate operation
                                         if (titleText.length > 0) {
-                                            const styleResult = await docClient.updateDocContent({
+                                            await docClient.updateDocContent({
                                                 agent: account,
                                                 docId: result.docId,
                                                 requests: [{
                                                     update_text_property: {
                                                         text_property: { bold: true },
-                                                        ranges: [{ start_index: 0, length: titleText.length }]
+                                                        ranges: [{ start_index: contentAfterParagraph.document.end - 1, length: titleText.length }]
                                                     }
                                                 }]
                                             });
-                                            if (!styleResult.raw || styleResult.raw.errcode !== 0) {
-                                                console.warn(`[wecom-doc] Failed to apply bold style: ${JSON.stringify(styleResult.raw)}`);
-                                            } else {
-                                                console.log(`[wecom-doc] Title bold style applied successfully`);
-                                            }
+                                            console.log(`[wecom-doc] Title bold style applied successfully`);
                                         }
                                     }
                                 }
 
                                 // Step 2: For subsequent items, insert one by one
-                                // Per API spec (doc.txt line 673): Each UpdateRequest object can only contain ONE field
-                                // Do NOT mix insert_paragraph and insert_text in same batch
+                                // Process for each item: insert_paragraph -> get latest content -> insert_text/image
                                 console.log(`[wecom-doc] Processing ${params.init_content.length - 1} body items`);
                                 for (let i = 1; i < params.init_content.length; i++) {
                                     const item = params.init_content[i];
                                     console.log(`[wecom-doc] Processing item ${i}: ${isImageItem(item) ? 'image' : 'text'}`);
 
-                                    // Get latest content to get current end index
-                                    // Per API spec (doc.txt line 616): must get latest index before each insert
-                                    const currentContent = await docClient.getDocContent({
+                                    // Step 2a: Insert paragraph at document end
+                                    const contentBeforeInsert = await docClient.getDocContent({
                                         agent: account,
                                         docId: result.docId,
                                     });
+                                    const docEndIndex = contentBeforeInsert.document.end;
+                                    
+                                    await docClient.updateDocContent({
+                                        agent: account,
+                                        docId: result.docId,
+                                        version: contentBeforeInsert.version,
+                                        requests: [{
+                                            insert_paragraph: {
+                                                location: { index: docEndIndex }
+                                            }
+                                        }]
+                                    });
 
-                                    const docEndIndex = currentContent.document.end;
-                                    const currentVersion = currentContent.version;
-                                    console.log(`[wecom-doc] Current doc end index: ${docEndIndex}, version: ${currentVersion}`);
+                                    // Step 2b: Get latest content to confirm new paragraph index
+                                    const contentAfterParagraph = await docClient.getDocContent({
+                                        agent: account,
+                                        docId: result.docId,
+                                    });
+                                    const paragraphIndex = contentAfterParagraph.document.end - 1;
+                                    console.log(`[wecom-doc] Created paragraph at index ${paragraphIndex}`);
 
+                                    // Step 2c: Insert content into the new paragraph
                                     if (isImageItem(item)) {
-                                        // Insert image
                                         const imgUrl = getImageUrl(item);
 
                                         try {
-                                            // Upload image to WeCom
                                             const base64 = await downloadImageAsBase64(imgUrl);
                                             const uploadResult = await docClient.uploadDocImage({
                                                 agent: account,
@@ -532,26 +571,22 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                                 base64_content: base64,
                                             });
 
-                                            // Insert image at end index (single operation)
-                                            const insertResult = await docClient.updateDocContent({
+                                            await docClient.updateDocContent({
                                                 agent: account,
                                                 docId: result.docId,
-                                                version: currentVersion,
+                                                version: contentAfterParagraph.version,
                                                 requests: [{
                                                     insert_image: {
                                                         image_id: uploadResult.url,
-                                                        location: { index: docEndIndex },
+                                                        location: { index: paragraphIndex },
                                                         width: uploadResult.width,
                                                         height: uploadResult.height
                                                     }
                                                 }]
                                             });
-                                            if (!insertResult.raw || insertResult.raw.errcode !== 0) {
-                                                throw new Error(`Insert image failed: ${JSON.stringify(insertResult.raw)}`);
-                                            }
                                             console.log(`[wecom-doc] Item ${i} image inserted successfully`);
                                         } catch (uploadErr) {
-                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}... url=${imgUrl.substring(0, 50)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
+                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
                                             throw new Error(`Image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
                                         }
                                     } else {
@@ -562,23 +597,17 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                         }
                                         console.log(`[wecom-doc] Item ${i} text: "${text.substring(0, 50)}..." (${text.length} chars)`);
 
-                                        // Insert text at end index (single operation per API spec)
-                                        // DO NOT combine with insert_paragraph in same batch
-                                        const insertResult = await docClient.updateDocContent({
+                                        await docClient.updateDocContent({
                                             agent: account,
                                             docId: result.docId,
-                                            version: currentVersion,
+                                            version: contentAfterParagraph.version,
                                             requests: [{
                                                 insert_text: {
                                                     text: text,
-                                                    location: { index: docEndIndex }
+                                                    location: { index: paragraphIndex }
                                                 }
                                             }]
                                         });
-                                        
-                                        if (!insertResult.raw || insertResult.raw.errcode !== 0) {
-                                            throw new Error(`Insert text failed at index ${i}: ${JSON.stringify(insertResult.raw)}`);
-                                        }
                                         console.log(`[wecom-doc] Item ${i} text inserted successfully`);
                                     }
                                 }
