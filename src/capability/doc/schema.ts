@@ -798,7 +798,7 @@ export const wecomDocToolSchema = {
             additionalProperties: false,
             required: ["action", "formInfo"],
             properties: {
-                action: { const: "create_collect" },
+                action: { const: "create_form" },
                 accountId: accountIdProperty,
                 formInfo: {
                     ...nonEmptyObjectProperty,
@@ -821,12 +821,12 @@ export const wecomDocToolSchema = {
             additionalProperties: false,
             required: ["action", "oper", "formId", "formInfo"],
             properties: {
-                action: { const: "modify_collect" },
+                action: { const: "modify_form" },
                 accountId: accountIdProperty,
                 oper: {
                     type: "string",
                     minLength: 1,
-                    description: "修改操作类型，按企业微信官方 modify_collect 定义填写",
+                    description: "修改操作类型：1=全量修改问题，2=全量修改设置（按企业微信官方 modify_form 定义）",
                 },
                 formId: formIdProperty,
                 formInfo: {

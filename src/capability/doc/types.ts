@@ -85,10 +85,10 @@ export interface Spacing {
 }
 
 export enum LineSpacingRule {
+    UNSPECIFIED = "LINE_SPACING_RULE_UNSPECIFIED",
     AUTO = "LINE_SPACING_RULE_AUTO",
     EXACT = "LINE_SPACING_RULE_EXACT",
-    AT_LEAST = "LINE_SPACING_RULE_AT_LEAST",
-    UNSPECIFIED = "PAGE_ORIENTATION_UNSPECIFIED" // Note: User text had a copy-paste error here, listing PAGE_ORIENTATION_UNSPECIFIED
+    AT_LEAST = "LINE_SPACING_RULE_AT_LEAST"
 }
 
 export interface Indent {
@@ -330,7 +330,7 @@ export interface Range {
 
 export interface ReplaceTextRequest {
     text: string;
-    ranges: Range[];
+    ranges: Range[];  // 最多 10 个范围
 }
 
 export interface InsertTextRequest {
@@ -381,7 +381,7 @@ export interface TextProperty {
 
 export interface UpdateTextPropertyRequest {
     text_property: TextProperty;
-    ranges: Range[];
+    ranges: Range[];  // 最多 10 个范围
 }
 
 export interface UpdateRequest {
@@ -412,20 +412,20 @@ export interface GetDocContentResponse {
 export interface FormQuestionOption {
     key: number;           // 必填，选项 key 从 1 开始
     value: string;         // 必填，选项内容
-    status?: number;       // 1 正常，2 删除
+    status?: number;       // 1 正常，2 删除。创建时不传则自动填充为 1
 }
 
 export interface FormQuestion {
     question_id: number;                           // 必填，问题 ID 从 1 开始（家校从 2 开始）
     title: string;                                 // 必填，问题标题
     pos: number;                                   // 必填，问题序号从 1 开始
-    status?: number;                               // 1 正常，2 删除
+    status?: number;                               // 1 正常，2 删除。创建时不传则自动填充为 1
     reply_type: number;                            // 必填，问题类型（1-22）
     must_reply: boolean;                           // 必填，是否必答
     note?: string;                                 // 可选，备注
     placeholder?: string;                          // 可选，输入提示
     question_extend_setting?: FormQuestionExtendSetting;  // 可选，题型扩展设置
-    option_item?: FormQuestionOption[];            // 单选/多选/下拉列表必填
+    option_item?: FormQuestionOption[];            // 单选/多选/下拉列表必填，创建时不传 status 则自动填充为 1
 }
 
 export interface FormQuestionExtendSetting {

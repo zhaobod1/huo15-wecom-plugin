@@ -826,22 +826,23 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         });
                     }
                     case "update_content": {
-                        const batchMode = params.batchMode === true;
-                        
                         const result = await docClient.updateDocContent({
                             agent: account,
                             docId: params.docId,
                             requests: params.requests,
                             version: params.version,
-                            batchMode: batchMode,
                         });
                         
+                        const batchCount = result.batches ?? 1;
                         return buildToolResult({
                             ok: true,
                             action: "update_content",
                             accountId: account.accountId,
                             docId: params.docId,
-                            summary: `文档内容已更新（${batchMode ? '批量' : '顺序'}模式）`,
+                            summary: batchCount > 1 
+                                ? `文档内容已更新（自动分批，共${batchCount}批）` 
+                                : "文档内容已更新",
+                            batches: batchCount,
                             raw: result.raw,
                         });
                     }
@@ -907,9 +908,8 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             raw: result,
                         });
                     }
-                    case "create_collect": {
+                    case "create_form": {
                         // 创建收集表（表单）
-                        // 参考 API 规范文档：E8_AF_B7_E4_B8_A5_E6_A0_BC_E6_8C_89_E7_85_A7_E4_BB_A5_E4_B8_---099c30ec-70bd-4e5b-ae03-212de0226a25.docx
                         try {
                             const result = await docClient.createCollect({
                                 agent: account,
@@ -920,7 +920,7 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             const title = readString(result.title);
                             return buildToolResult({
                                 ok: true,
-                                action: "create_collect",
+                                action: "create_form",
                                 accountId: account.accountId,
                                 formId: result.formId,
                                 title: title || undefined,
@@ -928,29 +928,18 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                 raw: result.raw,
                             });
                         } catch (err) {
-                            // 提供更详细的错误提示
                             const errorMsg = err instanceof Error ? err.message : String(err);
-                            const hint = `
-创建收集表失败。请检查以下必填项：
-- form_title: 收集表标题（必填）
-- form_question.items: 问题数组（必填，≤200 个）
-- 每个问题必须包含：question_id, title, pos, reply_type, must_reply
-- 单选/多选/下拉列表必须提供 option_item 数组
-- reply_type 对照表：1 文本，2 单选，3 多选，5 位置，9 图片，10 文件，11 日期，14 时间，15 下拉列表，16 体温，17 签名，18 部门，19 成员，22 时长
-
-错误详情：${errorMsg}`;
                             return buildToolResult({
                                 ok: false,
-                                action: "create_collect",
+                                action: "create_form",
                                 accountId: account.accountId,
                                 error: errorMsg,
                                 summary: "创建收集表失败",
-                                hint: hint.trim(),
                                 raw: {},
                             });
                         }
                     }
-                    case "modify_collect": {
+                    case "modify_form": {
                         const result = await docClient.modifyCollect({
                             agent: account,
                             oper: params.oper,
@@ -960,7 +949,7 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         const title = readString(result.title);
                         return buildToolResult({
                             ok: true,
-                            action: "modify_collect",
+                            action: "modify_form",
                             accountId: account.accountId,
                             formId: result.formId,
                             title: title || undefined,
@@ -1035,13 +1024,19 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                             startRow: params.startRow ?? 0,
                             startColumn: params.startColumn ?? 0,
                             gridData: params.gridData,
+                            requests: params.requests,  // Support direct requests for multiple operations
                         });
+                        const summary = result.operations 
+                            ? `在线表格已更新（${result.operations}个操作）`
+                            : "在线表格数据已编辑";
                         return buildToolResult({
                             ok: true,
                             action: "edit_sheet_data",
                             accountId: account.accountId,
                             docId: result.docId,
-                            summary: "在线表格数据已编辑",
+                            summary: summary,
+                            operations: result.operations,
+                            updatedCells: result.updatedCells,
                             raw: result.raw,
                         });
                     }
@@ -1180,22 +1175,6 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                     case "smartsheet_update_external_records": {
                         const result = await docClient.smartTableUpdateExternalRecords({ agent: account, ...params });
                         return buildToolResult({ ok: true, action, accountId: account.accountId, docId: params.docId, summary: "智能表格外部记录已更新", raw: result.raw });
-                    }
-                    case "smartsheet_add_records": {
-                        const result = await docClient.smartTableAddRecords({ agent: account, ...params });
-                        return buildToolResult({ ok: true, action, accountId: account.accountId, docId: params.docId, summary: "智能表格记录已添加", raw: result.raw });
-                    }
-                    case "smartsheet_update_records": {
-                        const result = await docClient.smartTableUpdateRecords({ agent: account, ...params });
-                        return buildToolResult({ ok: true, action, accountId: account.accountId, docId: params.docId, summary: "智能表格记录已更新", raw: result.raw });
-                    }
-                    case "smartsheet_del_records": {
-                        const result = await docClient.smartTableDelRecords({ agent: account, ...params });
-                        return buildToolResult({ ok: true, action, accountId: account.accountId, docId: params.docId, summary: "智能表格记录已删除", raw: result.raw });
-                    }
-                    case "smartsheet_get_records": {
-                        const result = await docClient.smartTableGetRecords({ agent: account, ...params });
-                        return buildToolResult({ ok: true, action, accountId: account.accountId, docId: params.docId, summary: "智能表格记录列表已获取", raw: result.raw });
                     }
                     case "smartsheet_get_sheets": {
                         const result = await docClient.smartTableGetSheets({

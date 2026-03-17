@@ -488,6 +488,16 @@ export class WecomDocClient {
             throw new Error("问题数量不能超过 200 个");
         }
         
+        // Auto-fill status fields for questions and options
+        questions.forEach((q: any) => {
+            if (q.status === undefined) q.status = 1;
+            if (Array.isArray(q.option_item)) {
+                q.option_item.forEach((opt: any) => {
+                    if (opt.status === undefined) opt.status = 1;
+                });
+            }
+        });
+        
         // Validate each question
         questions.forEach((q: any, index: number) => {
             if (!q.question_id || !Number.isInteger(q.question_id) || q.question_id < 1) {
@@ -505,6 +515,9 @@ export class WecomDocClient {
             if (q.must_reply === undefined || typeof q.must_reply !== 'boolean') {
                 throw new Error(`第${index + 1}个问题：must_reply 必填且必须为布尔值`);
             }
+            if (q.status !== undefined && ![1, 2].includes(q.status)) {
+                throw new Error(`第${index + 1}个问题：status 必须为 1(正常) 或 2(删除)`);
+            }
             
             // Validate option_item for single/multiple/dropdown questions
             const requiresOptions = [2, 3, 15].includes(q.reply_type); // 单选/多选/下拉列表
@@ -519,6 +532,9 @@ export class WecomDocClient {
                     }
                     if (!opt.value || readString(opt.value).length === 0) {
                         throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：value 必填`);
+                    }
+                    if (opt.status !== undefined && ![1, 2].includes(opt.status)) {
+                        throw new Error(`第${index + 1}个问题的第${optIndex + 1}个选项：status 必须为 1(正常) 或 2(删除)`);
                     }
                 });
             }
@@ -546,6 +562,13 @@ export class WecomDocClient {
             console.warn("警告：timed_finish 与 timed_repeat_info 互斥，若都填优先定时重复");
         }
         
+        // Validate timed_repeat_info.enable=true requires fill_in_range
+        if (formSetting.timed_repeat_info?.enable) {
+            if (!formSetting.fill_in_range || (!formSetting.fill_in_range.userids?.length && !formSetting.fill_in_range.departmentids?.length)) {
+                throw new Error("timed_repeat_info 开启时，fill_in_range 必填（需指定 userids 或 departmentids）");
+            }
+        }
+        
         // Build payload
         const payload: Record<string, unknown> = {
             form_info: {
@@ -563,8 +586,8 @@ export class WecomDocClient {
         if (normalizedFatherId) payload.fatherid = normalizedFatherId;
         
         const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/create_collect",
-            actionLabel: "create_collect",
+            path: "/cgi-bin/wedoc/create_form",
+            actionLabel: "create_form",
             agent,
             body: payload,
         });
@@ -604,6 +627,16 @@ export class WecomDocClient {
             if (questions.length > 200) {
                 throw new Error("问题数量不能超过 200 个");
             }
+            
+            // Auto-fill status fields for questions and options
+            questions.forEach((q: any) => {
+                if (q.status === undefined) q.status = 1;
+                if (Array.isArray(q.option_item)) {
+                    q.option_item.forEach((opt: any) => {
+                        if (opt.status === undefined) opt.status = 1;
+                    });
+                }
+            });
             
             // Validate each question (same as createCollect)
             questions.forEach((q: any, index: number) => {
@@ -658,8 +691,8 @@ export class WecomDocClient {
         }
         
         const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/modify_collect",
-            actionLabel: "modify_collect",
+            path: "/cgi-bin/wedoc/modify_form",
+            actionLabel: "modify_form",
             agent,
             body: payload,
         });
@@ -696,6 +729,12 @@ export class WecomDocClient {
                 .map((item) => Number(item))
                 .filter((item) => Number.isFinite(item))
             : [];
+        
+        // Official API limit: ≤100 answer IDs
+        if (normalizedAnswerIds.length > 100) {
+            throw new Error(`answer_ids 不能超过 100 个，当前：${normalizedAnswerIds.length}`);
+        }
+        
         const payload: Record<string, unknown> = {
             repeated_id: normalizedRepeatedId,
         };
@@ -724,6 +763,32 @@ export class WecomDocClient {
         if (payload.length === 0) {
             throw new Error("requests required");
         }
+        
+        // Validate each request per official API
+        payload.forEach((req: any, index: number) => {
+            const reqType = Number(req.req_type);
+            
+            // req_type=2: Get submitted list - requires start_time and end_time (same day timestamps)
+            if (reqType === 2) {
+                if (!req.start_time || !req.end_time) {
+                    throw new Error(`第${index + 1}个请求：req_type=2 时必须提供 start_time 和 end_time（当天时间戳）`);
+                }
+                // Validate timestamps are numbers
+                if (!Number.isFinite(Number(req.start_time)) || !Number.isFinite(Number(req.end_time))) {
+                    throw new Error(`第${index + 1}个请求：start_time 和 end_time 必须是有效时间戳`);
+                }
+                // Validate end_time >= start_time
+                if (Number(req.end_time) < Number(req.start_time)) {
+                    throw new Error(`第${index + 1}个请求：end_time 必须大于等于 start_time`);
+                }
+            }
+            
+            // Validate repeated_id is present
+            if (!req.repeated_id) {
+                throw new Error(`第${index + 1}个请求：repeated_id 必填`);
+            }
+        });
+        
         const json = await this.postWecomDocApi({
             path: "/cgi-bin/wedoc/get_form_statistic",
             actionLabel: "get_form_statistic",
@@ -758,30 +823,81 @@ export class WecomDocClient {
     }
 
     async updateDocContent(params: { agent: ResolvedAgentAccount; docId: string; requests: UpdateRequest[]; version?: number; batchMode?: boolean }) {
-        const { agent, docId, requests, version, batchMode } = params;
+        const { agent, docId, requests, version } = params;
         
         // Validate requests structure basic check
         const requestList = readArray(requests);
         if (requestList.length === 0) {
              throw new Error("requests list cannot be empty");
         }
+        
+        // Validate each request's ranges count (≤10 per official API)
+        requestList.forEach((req: any, index: number) => {
+            if (req.replace_text?.ranges && req.replace_text.ranges.length > 10) {
+                throw new Error(`第${index + 1}个操作：replace_text.ranges 不能超过 10 个`);
+            }
+            if (req.update_text_property?.ranges && req.update_text_property.ranges.length > 10) {
+                throw new Error(`第${index + 1}个操作：update_text_property.ranges 不能超过 10 个`);
+            }
+            // Validate insert_table limits
+            if (req.insert_table) {
+                const { rows, cols } = req.insert_table;
+                if (rows > 100) throw new Error(`第${index + 1}个操作：insert_table 行数不能超过 100`);
+                if (cols > 60) throw new Error(`第${index + 1}个操作：insert_table 列数不能超过 60`);
+                if (rows * cols > 1000) throw new Error(`第${index + 1}个操作：insert_table 单元格总数不能超过 1000`);
+            }
+        });
 
-        const body: Record<string, unknown> = {
-            docid: readString(docId),
-            requests: requestList,
-        };
-        // version is optional but recommended for concurrency control
-        if (version !== undefined && version !== null) {
-            body.version = Number(version);
+        // Official API limit: ≤30 operations per batch
+        const MAX_OPERATIONS = 30;
+        if (requestList.length <= MAX_OPERATIONS) {
+            // Single batch
+            const body: Record<string, unknown> = {
+                docid: readString(docId),
+                requests: requestList,
+            };
+            if (version !== undefined && version !== null) {
+                body.version = Number(version);
+            }
+            
+            const json = await this.postWecomDocApi({
+                path: "/cgi-bin/wedoc/document/batch_update",
+                actionLabel: "update_doc_content",
+                agent,
+                body,
+            }) as BatchUpdateDocResponse;
+            return { raw: json, batches: 1 };
         }
         
-        const json = await this.postWecomDocApi({
-            path: "/cgi-bin/wedoc/document/batch_update",
-            actionLabel: "update_doc_content",
-            agent,
-            body,
-        }) as BatchUpdateDocResponse;
-        return { raw: json };
+        // Auto-batch: split into multiple requests
+        // Note: Each batch updates the version, so we need to get latest version for each batch
+        const batches: BatchUpdateDocResponse[] = [];
+        for (let i = 0; i < requestList.length; i += MAX_OPERATIONS) {
+            const batchRequests = requestList.slice(i, i + MAX_OPERATIONS);
+            
+            // Get latest version before each batch (except first if version provided)
+            let currentVersion = version;
+            if (i > 0 || currentVersion === undefined || currentVersion === null) {
+                const content = await this.getDocContent({ agent, docId });
+                currentVersion = content.version;
+            }
+            
+            const body: Record<string, unknown> = {
+                docid: readString(docId),
+                requests: batchRequests,
+                version: currentVersion,
+            };
+            
+            const json = await this.postWecomDocApi({
+                path: "/cgi-bin/wedoc/document/batch_update",
+                actionLabel: `update_doc_content_batch_${Math.floor(i / MAX_OPERATIONS) + 1}`,
+                agent,
+                body,
+            }) as BatchUpdateDocResponse;
+            batches.push(json);
+        }
+        
+        return { raw: batches[batches.length - 1], batches: batches.length, allBatches: batches };
     }
 
     // --- Spreadsheet Operations ---
@@ -824,8 +940,9 @@ export class WecomDocClient {
         startRow?: number;
         startColumn?: number;
         gridData?: any;
+        requests?: any[];  // For direct batch_update with multiple operations
     }) {
-        const { agent, docId, sheetId, startRow = 0, startColumn = 0, gridData } = params;
+        const { agent, docId, sheetId, startRow = 0, startColumn = 0, gridData, requests } = params;
         
         // Validate required docId
         const normalizedDocId = readString(docId);
@@ -839,15 +956,72 @@ export class WecomDocClient {
             throw new Error('sheetId is required');
         }
         
+        // Handle direct requests (for multiple operations)
+        if (requests && requests.length > 0) {
+            // Official API limit: ≤5 operations per batch
+            const MAX_OPERATIONS = 5;
+            
+            // Validate each request
+            requests.forEach((req: any, index: number) => {
+                if (req.update_range_request?.grid_data?.rows) {
+                    const rows = req.update_range_request.grid_data.rows;
+                    const rowCount = rows.length;
+                    const rowWidths = rows.map((row: any) => row.values?.length || 0);
+                    const columnCount = rowWidths.length > 0 ? Math.max(...rowWidths) : 0;
+                    const totalCells = rowWidths.reduce((sum: number, width: number) => sum + width, 0);
+                    
+                    if (rowCount > 1000) throw new Error(`第${index + 1}个操作：行数不能超过 1000`);
+                    if (columnCount > 200) throw new Error(`第${index + 1}个操作：列数不能超过 200`);
+                    if (totalCells > 10000) throw new Error(`第${index + 1}个操作：单元格总数不能超过 10000`);
+                }
+            });
+            
+            if (requests.length > MAX_OPERATIONS) {
+                throw new Error(`单次批量更新最多${MAX_OPERATIONS}个操作，当前：${requests.length}`);
+            }
+            
+            const body = {
+                docid: normalizedDocId,
+                requests: requests
+            };
+            
+            const json = await this.postWecomDocApi({
+                path: "/cgi-bin/wedoc/spreadsheet/batch_update",
+                actionLabel: "spreadsheet_batch_update",
+                agent, body,
+            });
+            return { 
+                raw: json, 
+                docId: normalizedDocId,
+                operations: requests.length
+            };
+        }
+        
+        // Handle single gridData update
+        if (!gridData) {
+            throw new Error('gridData or requests is required');
+        }
+        
         // Build GridData per official API
         // gridData.rows[i].values[j] must be: {cell_value: {text} | {link: {text, url}}, cell_format?: {...}}
-        const rows = (gridData?.rows || []).map((row: any) => ({
+        const rows = (gridData.rows || []).map((row: any) => ({
             values: (row.values || []).map((cell: any) => {
                 // If already CellData format, use as-is
                 if (cell && typeof cell === 'object' && cell.cell_value) {
                     return cell;
                 }
-                // Otherwise wrap primitive as CellValue
+                // Support link simplified format: { url: '...', text: '...' }
+                if (cell && typeof cell === 'object' && cell.url) {
+                    return { 
+                        cell_value: { 
+                            link: { 
+                                url: String(cell.url), 
+                                text: String(cell.text ?? cell.url) 
+                            } 
+                        } 
+                    };
+                }
+                // Otherwise wrap primitive as CellValue with text
                 return { cell_value: { text: String(cell ?? '') } };
             })
         }));
@@ -874,8 +1048,7 @@ export class WecomDocClient {
             rows: rows
         };
         
-        // Build batch_update request per official API
-        // Note: requests array length ≤ 5 per API spec
+        // Build batch_update request per official API (single operation)
         const body = {
             docid: normalizedDocId,
             requests: [{
@@ -893,7 +1066,7 @@ export class WecomDocClient {
         });
         return { 
             raw: json, 
-            docId: body.docid as string,
+            docId: normalizedDocId,
             updatedCells: json.data?.responses?.[0]?.update_range_response?.updated_cells || 0
         };
     }
