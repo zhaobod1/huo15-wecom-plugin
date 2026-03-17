@@ -449,7 +449,7 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                                 }]
                                             });
                                         } catch (uploadErr) {
-                                            console.error(`Failed to upload first image ${imgUrl}:`, uploadErr);
+                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}... url=${imgUrl.substring(0, 50)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
                                             throw new Error(`First image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
                                         }
                                     } else {
@@ -535,7 +535,7 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                                 ]
                                             });
                                         } catch (uploadErr) {
-                                            console.error(`Failed to upload image ${imgUrl}:`, uploadErr);
+                                            console.error(`[wecom-doc] upload_image_failed: docId=${result.docId.substring(0, 8)}... url=${imgUrl.substring(0, 50)}...`, uploadErr instanceof Error ? uploadErr.message : String(uploadErr));
                                             throw new Error(`Image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
                                         }
                                     } else {
