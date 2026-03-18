@@ -1,5 +1,5 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
-
+import { clearWecomSourceAccount } from "../runtime/source-registry.js";
 import { WecomAccountRuntime } from "./account-runtime.js";
 
 let runtime: PluginRuntime | null = null;
@@ -9,6 +9,23 @@ const botWsPushHandles = new Map<string, BotWsPushHandle>();
 export type BotWsPushHandle = {
   isConnected: () => boolean;
   sendMarkdown: (chatId: string, content: string) => Promise<void>;
+  replyCommand: (params: {
+    cmd: string;
+    body?: Record<string, unknown>;
+    headers?: Record<string, string>;
+  }) => Promise<Record<string, unknown>>;
+  sendMedia: (params: {
+    chatId: string;
+    mediaUrl: string;
+    text?: string;
+    mediaLocalRoots?: readonly string[];
+  }) => Promise<{
+    ok: boolean;
+    messageId?: string;
+    rejected?: boolean;
+    rejectReason?: string;
+    error?: string;
+  }>;
 };
 
 export function setWecomRuntime(next: PluginRuntime): void {
@@ -50,5 +67,6 @@ export function unregisterBotWsPushHandle(accountId: string): void {
 export function unregisterAccountRuntime(accountId: string): void {
   runtimes.delete(accountId);
   botWsPushHandles.delete(accountId);
+  clearWecomSourceAccount(accountId);
   console.log(`[wecom-runtime] unregister account=${accountId}`);
 }

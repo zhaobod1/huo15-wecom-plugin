@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BotWsPushHandle } from "./app/index.js";
 
 vi.mock("./transport/agent-api/core.js", () => ({
   sendText: vi.fn(),
@@ -7,6 +8,25 @@ vi.mock("./transport/agent-api/core.js", () => ({
 }));
 
 describe("wecomOutbound", () => {
+  const createBotWsHandle = (overrides: Partial<BotWsPushHandle> = {}): BotWsPushHandle => ({
+    isConnected: () => true,
+    sendMarkdown: vi.fn().mockResolvedValue(undefined),
+    replyCommand: vi.fn().mockResolvedValue({ errcode: 0 }),
+    sendMedia: vi.fn().mockResolvedValue({ ok: true, messageId: "ws-media-1" }),
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    const runtime = await import("./runtime.js");
+    runtime.setWecomRuntime({
+      channel: {
+        text: {
+          chunkText: (text: string) => [text],
+        },
+      },
+    } as any);
+  });
+
   afterEach(async () => {
     const runtime = await import("./runtime.js");
     runtime.unregisterBotWsPushHandle("default");
@@ -80,9 +100,9 @@ describe("wecomOutbound", () => {
     };
 
     // Chat ID (wr/wc) is intentionally NOT supported for Agent outbound.
-    await expect(wecomOutbound.sendText({ cfg, to: "wr123", text: "hello" } as any)).rejects.toThrow(
-      /不支持向群 chatId 发送/,
-    );
+    await expect(
+      wecomOutbound.sendText({ cfg, to: "wr123", text: "hello" } as any),
+    ).rejects.toThrow(/不支持向群 chatId 发送/);
     expect(api.sendText).not.toHaveBeenCalled();
 
     // Test: User ID (Default)
@@ -186,10 +206,12 @@ describe("wecomOutbound", () => {
     const api = await import("./transport/agent-api/core.js");
     const sendMarkdown = vi.fn().mockResolvedValue(undefined);
     const now = vi.spyOn(Date, "now").mockReturnValue(789);
-    runtime.registerBotWsPushHandle("acct-ws", {
-      isConnected: () => true,
-      sendMarkdown,
-    });
+    runtime.registerBotWsPushHandle(
+      "acct-ws",
+      createBotWsHandle({
+        sendMarkdown,
+      }),
+    );
     (api.sendText as any).mockClear();
 
     const cfg = {
@@ -271,15 +293,70 @@ describe("wecomOutbound", () => {
     expect(api.sendText).not.toHaveBeenCalled();
   });
 
-  it("keeps outbound media on Agent even when Bot WS is active", async () => {
+  it("prefers Bot WS for outbound media when ws is the active bot transport", async () => {
     const { wecomOutbound } = await import("./outbound.js");
     const runtime = await import("./runtime.js");
     const api = await import("./transport/agent-api/core.js");
-    const sendMarkdown = vi.fn().mockResolvedValue(undefined);
-    runtime.registerBotWsPushHandle("default", {
-      isConnected: () => true,
-      sendMarkdown,
+    const sendMedia = vi.fn().mockResolvedValue({ ok: true, messageId: "ws-media-1" });
+    runtime.registerBotWsPushHandle(
+      "default",
+      createBotWsHandle({
+        sendMedia,
+      }),
+    );
+    (api.uploadMedia as any).mockResolvedValue("media-1");
+    (api.sendMedia as any).mockResolvedValue(undefined);
+    (api.sendMedia as any).mockClear();
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          bot: {
+            primaryTransport: "ws",
+            ws: {
+              botId: "bot-1",
+              secret: "secret-1",
+            },
+          },
+          agent: {
+            corpId: "corp",
+            corpSecret: "secret",
+            agentId: 1000002,
+            token: "token",
+            encodingAESKey: "aes",
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendMedia({
+      cfg,
+      to: "user:zhangsan",
+      text: "caption",
+      mediaUrl: "https://example.com/media.png",
+    } as any);
+
+    expect(sendMedia).toHaveBeenCalledWith({
+      chatId: "zhangsan",
+      mediaUrl: "https://example.com/media.png",
+      mediaLocalRoots: undefined,
+      text: "caption",
     });
+    expect(api.sendMedia).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Agent media when Bot WS media delivery returns a non-fatal failure", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sendMedia = vi.fn().mockResolvedValue({ ok: false, error: "upload failed" });
+    runtime.registerBotWsPushHandle(
+      "default",
+      createBotWsHandle({
+        sendMedia,
+      }),
+    );
     (api.uploadMedia as any).mockResolvedValue("media-1");
     (api.sendMedia as any).mockResolvedValue(undefined);
     (api.sendMedia as any).mockClear();
@@ -321,8 +398,8 @@ describe("wecomOutbound", () => {
       mediaUrl: "https://example.com/media.png",
     } as any);
 
+    expect(sendMedia).toHaveBeenCalledTimes(1);
     expect(api.sendMedia).toHaveBeenCalledTimes(1);
-    expect(sendMarkdown).not.toHaveBeenCalled();
   });
 
   it("uses account-scoped agent config in matrix mode", async () => {

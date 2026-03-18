@@ -1,8 +1,8 @@
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-
-import { resolveRuntimeRoute } from "./routing-bridge.js";
-import type { UnifiedInboundEvent } from "../types/index.js";
 import type { WecomMediaService } from "../shared/media-service.js";
+import type { UnifiedInboundEvent } from "../types/index.js";
+import { resolveRuntimeRoute } from "./routing-bridge.js";
+import { registerWecomSourceSnapshot } from "./source-registry.js";
 
 export type PreparedSession = {
   route: ReturnType<typeof resolveRuntimeRoute>;
@@ -18,6 +18,14 @@ export async function prepareInboundSession(params: {
 }): Promise<PreparedSession> {
   const { core, cfg, event, mediaService } = params;
   const route = resolveRuntimeRoute({ core, cfg, event });
+  if (event.transport === "bot-ws") {
+    registerWecomSourceSnapshot({
+      accountId: event.accountId,
+      source: "bot-ws",
+      messageId: event.messageId,
+      sessionKey: route.sessionKey,
+    });
+  }
   const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
     agentId: route.agentId,
   });
@@ -47,7 +55,10 @@ export async function prepareInboundSession(params: {
       event.conversation.peerKind === "group"
         ? `wecom:group:${event.conversation.peerId}`
         : `wecom:user:${event.conversation.senderId}`,
-    To: event.conversation.peerKind === "group" ? `wecom:group:${event.conversation.peerId}` : `wecom:user:${event.conversation.peerId}`,
+    To:
+      event.conversation.peerKind === "group"
+        ? `wecom:group:${event.conversation.peerId}`
+        : `wecom:user:${event.conversation.peerId}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: event.conversation.peerKind,
@@ -57,7 +68,10 @@ export async function prepareInboundSession(params: {
     Provider: "wecom",
     Surface: "wecom",
     OriginatingChannel: "wecom",
-    OriginatingTo: event.conversation.peerKind === "group" ? `wecom:group:${event.conversation.peerId}` : `wecom:user:${event.conversation.peerId}`,
+    OriginatingTo:
+      event.conversation.peerKind === "group"
+        ? `wecom:group:${event.conversation.peerId}`
+        : `wecom:user:${event.conversation.peerId}`,
     MessageSid: event.messageId,
     CommandAuthorized: true,
     MediaPath: mediaPath,
@@ -69,7 +83,7 @@ export async function prepareInboundSession(params: {
     storePath,
     sessionKey: ctx.SessionKey ?? route.sessionKey,
     ctx,
-    onRecordError: () => { },
+    onRecordError: () => {},
   });
 
   return { route, ctx, storePath };

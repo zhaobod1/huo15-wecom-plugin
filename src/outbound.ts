@@ -1,7 +1,10 @@
 import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
-
-import { resolveWecomAccount, resolveWecomAccountConflict, resolveWecomAccounts } from "./config/index.js";
 import { WecomAgentDeliveryService } from "./capability/agent/index.js";
+import {
+  resolveWecomAccount,
+  resolveWecomAccountConflict,
+  resolveWecomAccounts,
+} from "./config/index.js";
 import { getAccountRuntime, getBotWsPushHandle, getWecomRuntime } from "./runtime.js";
 import { resolveScopedWecomTarget } from "./target.js";
 
@@ -49,7 +52,9 @@ function resolveAgentConfigOrThrow(params: {
     );
   }
   // 注意：不要在日志里输出 corpSecret 等敏感信息
-  getAccountRuntime(account.accountId)?.log.info?.(`[wecom-outbound] Using agent config: accountId=${account.accountId}, corpId=${account.corpId}, agentId=${account.agentId}`);
+  getAccountRuntime(account.accountId)?.log.info?.(
+    `[wecom-outbound] Using agent config: accountId=${account.accountId}, corpId=${account.corpId}, agentId=${account.agentId}`,
+  );
   return account;
 }
 
@@ -89,7 +94,13 @@ function shouldPreferBotWsOutbound(params: {
     accountId: params.accountId,
   });
   return {
-    preferred: !isExplicitAgentTarget(params.to) && Boolean(account.bot?.configured && account.bot.primaryTransport === "ws" && account.bot.wsConfigured),
+    preferred:
+      !isExplicitAgentTarget(params.to) &&
+      Boolean(
+        account.bot?.configured &&
+        account.bot.primaryTransport === "ws" &&
+        account.bot.wsConfigured,
+      ),
     accountId: account.accountId,
   };
 }
@@ -122,10 +133,64 @@ async function sendTextViaBotWs(params: {
       `WeCom outbound account=${accountId} is configured for Bot WS active push, but the WS transport is not connected.`,
     );
   }
-  console.log(`[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${params.text.length})`);
+  console.log(
+    `[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${params.text.length})`,
+  );
   await handle.sendMarkdown(chatId, params.text);
   console.log(`[wecom-outbound] Successfully sent Bot WS active message to ${chatId}`);
   return true;
+}
+
+async function sendMediaViaBotWs(params: {
+  cfg: ChannelOutboundContext["cfg"];
+  accountId?: string | null;
+  to: string | undefined;
+  mediaUrl: string;
+  text?: string;
+  mediaLocalRoots?: readonly string[];
+}): Promise<{
+  attempted: boolean;
+  sent: boolean;
+  reason?: string;
+}> {
+  const { preferred, accountId } = shouldPreferBotWsOutbound(params);
+  if (!preferred) {
+    return { attempted: false, sent: false };
+  }
+  const chatId = resolveBotWsChatTarget({
+    to: params.to,
+    accountId,
+  });
+  if (!chatId) {
+    return { attempted: false, sent: false };
+  }
+  const handle = getBotWsPushHandle(accountId);
+  if (!handle) {
+    throw new Error(
+      `WeCom outbound account=${accountId} is configured for Bot WS active push, but no live WS runtime is registered.`,
+    );
+  }
+  if (!handle.isConnected()) {
+    throw new Error(
+      `WeCom outbound account=${accountId} is configured for Bot WS active push, but the WS transport is not connected.`,
+    );
+  }
+  console.log(
+    `[wecom-outbound] Sending Bot WS media to target=${String(params.to ?? "")} chatId=${chatId} media=${params.mediaUrl}`,
+  );
+  const result = await handle.sendMedia({
+    chatId,
+    mediaUrl: params.mediaUrl,
+    text: params.text,
+    mediaLocalRoots: params.mediaLocalRoots,
+  });
+  if (result.ok) {
+    console.log(`[wecom-outbound] Successfully sent Bot WS media to ${chatId}`);
+    return { attempted: true, sent: true };
+  }
+  const reason = result.rejectReason || result.error || "unknown";
+  console.warn(`[wecom-outbound] Bot WS media failed for ${chatId}: ${reason}`);
+  return { attempted: true, sent: false, reason };
 }
 
 export const wecomOutbound: ChannelOutboundAdapter = {
@@ -155,8 +220,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     const trimmed = String(outgoingText ?? "").trim();
     const rawTo = typeof to === "string" ? to.trim().toLowerCase() : "";
     const isAgentSessionTarget = rawTo.startsWith("wecom-agent:");
-    const looksLikeNewSessionAck =
-      /new session started/i.test(trimmed) && /model:/i.test(trimmed);
+    const looksLikeNewSessionAck = /new session started/i.test(trimmed) && /model:/i.test(trimmed);
 
     if (looksLikeNewSessionAck) {
       if (!isAgentSessionTarget) {
@@ -174,7 +238,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
 
     let sentViaBotWs = false;
     let agent: any = null;
-    
+
     try {
       sentViaBotWs = await sendTextViaBotWs({
         cfg,
@@ -185,7 +249,9 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       if (!sentViaBotWs) {
         // Defer Agent resolution until needed for fallback
         agent = resolveAgentConfigOrThrow({ cfg, accountId });
-        getAccountRuntime(agent.accountId)?.log.info?.(`[wecom-outbound] Sending text to target=${String(to ?? "")} (len=${outgoingText.length})`);
+        getAccountRuntime(agent.accountId)?.log.info?.(
+          `[wecom-outbound] Sending text to target=${String(to ?? "")} (len=${outgoingText.length})`,
+        );
         const deliveryService = new WecomAgentDeliveryService(agent);
         await deliveryService.sendText({
           to,
@@ -195,7 +261,9 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       }
     } catch (err) {
       if (agent) {
-        getAccountRuntime(agent.accountId)?.log.error?.(`[wecom-outbound] Failed to send text to ${String(to ?? "")}: ${err instanceof Error ? err.message : String(err)}`);
+        getAccountRuntime(agent.accountId)?.log.error?.(
+          `[wecom-outbound] Failed to send text to ${String(to ?? "")}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       throw err;
     }
@@ -206,18 +274,37 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       timestamp: Date.now(),
     };
   },
-  sendMedia: async ({ cfg, to, text, mediaUrl, accountId }: ChannelOutboundContext) => {
+  sendMedia: async ({
+    cfg,
+    to,
+    text,
+    mediaUrl,
+    accountId,
+    mediaLocalRoots,
+  }: ChannelOutboundContext) => {
     // signal removed - not supported in current SDK
-
-    const { preferred } = shouldPreferBotWsOutbound({ cfg, accountId, to });
-    if (preferred) {
-      console.log(`[wecom-outbound] Bot WS active push does not support outbound media; falling back to Agent for target=${String(to ?? "")}`);
-    }
-    const agent = resolveAgentConfigOrThrow({ cfg, accountId });
-    const deliveryService = new WecomAgentDeliveryService(agent);
     if (!mediaUrl) {
       throw new Error("WeCom outbound requires mediaUrl.");
     }
+
+    const botWs = await sendMediaViaBotWs({
+      cfg,
+      accountId,
+      to,
+      text,
+      mediaUrl,
+      mediaLocalRoots,
+    });
+    if (botWs.sent) {
+      return {
+        channel: "wecom",
+        messageId: `bot-ws-media-${Date.now()}`,
+        timestamp: Date.now(),
+      };
+    }
+
+    const agent = resolveAgentConfigOrThrow({ cfg, accountId });
+    const deliveryService = new WecomAgentDeliveryService(agent);
 
     let buffer: Buffer;
     let contentType: string;
@@ -246,23 +333,49 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       // 根据扩展名推断 content-type
       const ext = path.extname(mediaUrl).slice(1).toLowerCase();
       const mimeTypes: Record<string, string> = {
-        jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-        webp: "image/webp", bmp: "image/bmp", mp3: "audio/mpeg", wav: "audio/wav",
-        amr: "audio/amr", mp4: "video/mp4", pdf: "application/pdf", doc: "application/msword",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        gif: "image/gif",
+        webp: "image/webp",
+        bmp: "image/bmp",
+        mp3: "audio/mpeg",
+        wav: "audio/wav",
+        amr: "audio/amr",
+        mp4: "video/mp4",
+        pdf: "application/pdf",
+        doc: "application/msword",
         docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        txt: "text/plain", csv: "text/csv", tsv: "text/tab-separated-values", md: "text/markdown", json: "application/json",
-        xml: "application/xml", yaml: "application/yaml", yml: "application/yaml",
-        zip: "application/zip", rar: "application/vnd.rar", "7z": "application/x-7z-compressed",
-        tar: "application/x-tar", gz: "application/gzip", tgz: "application/gzip",
-        rtf: "application/rtf", odt: "application/vnd.oasis.opendocument.text",
+        xls: "application/vnd.ms-excel",
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ppt: "application/vnd.ms-powerpoint",
+        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        txt: "text/plain",
+        csv: "text/csv",
+        tsv: "text/tab-separated-values",
+        md: "text/markdown",
+        json: "application/json",
+        xml: "application/xml",
+        yaml: "application/yaml",
+        yml: "application/yaml",
+        zip: "application/zip",
+        rar: "application/vnd.rar",
+        "7z": "application/x-7z-compressed",
+        tar: "application/x-tar",
+        gz: "application/gzip",
+        tgz: "application/gzip",
+        rtf: "application/rtf",
+        odt: "application/vnd.oasis.opendocument.text",
       };
       contentType = mimeTypes[ext] || "application/octet-stream";
-      console.log(`[wecom-outbound] Reading local file: ${mediaUrl}, ext=${ext}, contentType=${contentType}`);
+      console.log(
+        `[wecom-outbound] Reading local file: ${mediaUrl}, ext=${ext}, contentType=${contentType}`,
+      );
     }
 
-    console.log(`[wecom-outbound] Sending media to ${String(to ?? "")} (filename=${filename}, contentType=${contentType})`);
+    console.log(
+      `[wecom-outbound] Sending media to ${String(to ?? "")} (filename=${filename}, contentType=${contentType})`,
+    );
 
     try {
       await deliveryService.sendMedia({
@@ -280,7 +393,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
 
     return {
       channel: "wecom",
-      messageId: `agent-media-${Date.now()}`,
+      messageId: `${botWs.attempted ? "agent-fallback-media" : "agent-media"}-${Date.now()}`,
       timestamp: Date.now(),
     };
   },

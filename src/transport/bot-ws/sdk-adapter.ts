@@ -1,13 +1,18 @@
 import crypto from "node:crypto";
-
-import AiBot, { type BaseMessage, type EventMessage, type WsFrame } from "@wecom/aibot-node-sdk";
-
-import type { RuntimeLogSink } from "../../types/index.js";
+import AiBot, {
+  generateReqId,
+  type BaseMessage,
+  type EventMessage,
+  type WsFrame,
+} from "@wecom/aibot-node-sdk";
+import type { WecomAccountRuntime } from "../../app/account-runtime.js";
 import { registerBotWsPushHandle, unregisterBotWsPushHandle } from "../../app/index.js";
+import { clearWecomMcpAccountCache } from "../../capability/mcp/index.js";
+import type { RuntimeLogSink } from "../../types/index.js";
 import { mapBotWsFrameToInboundEvent } from "./inbound.js";
+import { uploadAndSendBotWsMedia } from "./media.js";
 import { createBotWsReplyHandle } from "./reply.js";
 import { createBotWsSessionSnapshot } from "./session.js";
-import type { WecomAccountRuntime } from "../../app/account-runtime.js";
 
 export class BotWsSdkAdapter {
   private client?: AiBot.WSClient;
@@ -32,15 +37,35 @@ export class BotWsSdkAdapter {
       botId: bot.ws.botId,
       secret: bot.ws.secret,
       logger: {
-        debug: (message, ...args) => this.log.info?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
-        info: (message, ...args) => this.log.info?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
-        warn: (message, ...args) => this.log.warn?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
-        error: (message, ...args) => this.log.error?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
+        debug: (message, ...args) =>
+          this.log.info?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
+        info: (message, ...args) =>
+          this.log.info?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
+        warn: (message, ...args) =>
+          this.log.warn?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
+        error: (message, ...args) =>
+          this.log.error?.(`[wecom-ws] ${message} ${args.join(" ")}`.trim()),
       },
     });
     this.client = client;
     registerBotWsPushHandle(this.runtime.account.accountId, {
       isConnected: () => client.isConnected,
+      replyCommand: async ({ cmd, body, headers }) => {
+        const result = await client.reply(
+          { headers: headers ?? { req_id: generateReqId("wecom_ws") } },
+          body ?? {},
+          cmd,
+        );
+        this.runtime.touchTransportSession("bot-ws", {
+          ownerId: this.ownerId,
+          running: true,
+          connected: client.isConnected,
+          authenticated: client.isConnected,
+          lastOutboundAt: Date.now(),
+          lastError: undefined,
+        });
+        return result as Record<string, unknown>;
+      },
       sendMarkdown: async (chatId, content) => {
         await client.sendMessage(chatId, {
           msgtype: "markdown",
@@ -54,6 +79,29 @@ export class BotWsSdkAdapter {
           lastOutboundAt: Date.now(),
           lastError: undefined,
         });
+      },
+      sendMedia: async ({ chatId, mediaUrl, text, mediaLocalRoots }) => {
+        const result = await uploadAndSendBotWsMedia({
+          wsClient: client,
+          chatId,
+          mediaUrl,
+          mediaLocalRoots,
+        });
+        if (result.ok && text?.trim()) {
+          await client.sendMessage(chatId, {
+            msgtype: "markdown",
+            markdown: { content: text.trim() },
+          });
+        }
+        this.runtime.touchTransportSession("bot-ws", {
+          ownerId: this.ownerId,
+          running: true,
+          connected: client.isConnected,
+          authenticated: client.isConnected,
+          lastOutboundAt: Date.now(),
+          lastError: result.ok ? undefined : result.error,
+        });
+        return result;
       },
     });
 
@@ -82,8 +130,12 @@ export class BotWsSdkAdapter {
     });
 
     client.on("disconnected", (reason) => {
+      clearWecomMcpAccountCache(this.runtime.account.accountId);
       const normalizedReason = String(reason ?? "").toLowerCase();
-      const kicked = normalizedReason.includes("kick") || normalizedReason.includes("owner") || normalizedReason.includes("replaced");
+      const kicked =
+        normalizedReason.includes("kick") ||
+        normalizedReason.includes("owner") ||
+        normalizedReason.includes("replaced");
       this.log.warn?.(
         `[wecom-ws] disconnected account=${this.runtime.account.accountId} kicked=${String(kicked)} reason=${reason ?? "unknown"}`,
       );
@@ -109,11 +161,15 @@ export class BotWsSdkAdapter {
     });
 
     client.on("reconnecting", (attempt) => {
-      this.log.warn?.(`[wecom-ws] reconnecting account=${this.runtime.account.accountId} attempt=${attempt}`);
+      this.log.warn?.(
+        `[wecom-ws] reconnecting account=${this.runtime.account.accountId} attempt=${attempt}`,
+      );
     });
 
     client.on("error", (error) => {
-      this.log.error?.(`[wecom-ws] error account=${this.runtime.account.accountId} message=${error.message}`);
+      this.log.error?.(
+        `[wecom-ws] error account=${this.runtime.account.accountId} message=${error.message}`,
+      );
       this.runtime.updateTransportSession(
         createBotWsSessionSnapshot({
           accountId: this.runtime.account.accountId,
@@ -176,6 +232,25 @@ export class BotWsSdkAdapter {
           });
         },
       });
+
+      const staticWelcomeText =
+        event.inboundKind === "welcome" ? botAccount.config.welcomeText?.trim() : undefined;
+      if (staticWelcomeText) {
+        this.log.info?.(
+          `[wecom-ws] static welcome reply account=${this.runtime.account.accountId} messageId=${event.messageId} peer=${event.conversation.peerKind}:${event.conversation.peerId} len=${staticWelcomeText.length}`,
+        );
+        await replyHandle.deliver(
+          {
+            text: staticWelcomeText,
+          },
+          { kind: "final" },
+        );
+        this.log.info?.(
+          `[wecom-ws] static welcome delivered account=${this.runtime.account.accountId} messageId=${event.messageId}`,
+        );
+        return;
+      }
+
       await this.runtime.handleEvent(event, replyHandle);
     };
 
@@ -221,6 +296,7 @@ export class BotWsSdkAdapter {
 
   stop(): void {
     this.log.info?.(`[wecom-ws] stop account=${this.runtime.account.accountId}`);
+    clearWecomMcpAccountCache(this.runtime.account.accountId);
     unregisterBotWsPushHandle(this.runtime.account.accountId);
     this.runtime.updateTransportSession(
       createBotWsSessionSnapshot({

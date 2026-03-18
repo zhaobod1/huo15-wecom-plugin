@@ -1,8 +1,11 @@
 import { formatErrorMessage, type OpenClawConfig, type PluginRuntime } from "openclaw/plugin-sdk";
-
-import { InMemoryRuntimeStore } from "../store/memory-store.js";
-import { WecomMediaService } from "../shared/media-service.js";
+import type { ResolvedRuntimeAccount } from "../config/runtime-config.js";
+import { WecomAuditLog } from "../observability/audit-log.js";
+import { WecomStatusRegistry } from "../observability/status-registry.js";
 import { summarizeTransportSessions } from "../observability/transport-session-view.js";
+import { dispatchInboundEvent } from "../runtime/dispatcher.js";
+import { WecomMediaService } from "../shared/media-service.js";
+import { InMemoryRuntimeStore } from "../store/memory-store.js";
 import type {
   AccountRuntimeStatusSnapshot,
   ReplyHandle,
@@ -14,10 +17,6 @@ import type {
   WecomRuntimeHealth,
   WecomTransportKind,
 } from "../types/index.js";
-import type { ResolvedRuntimeAccount } from "../config/runtime-config.js";
-import { dispatchInboundEvent } from "../runtime/dispatcher.js";
-import { WecomAuditLog } from "../observability/audit-log.js";
-import { WecomStatusRegistry } from "../observability/status-registry.js";
 
 export class WecomAccountRuntime {
   readonly store = new InMemoryRuntimeStore();
@@ -60,22 +59,36 @@ export class WecomAccountRuntime {
   }
 
   async handleEvent(event: UnifiedInboundEvent, replyHandle: ReplyHandle): Promise<void> {
+    const dispatchStartedAt = Date.now();
     this.runtimeStatus.lastInboundAt = Date.now();
     this.runtimeStatus.recentInboundSummary = `${event.transport} ${event.inboundKind} ${event.messageId}`;
     this.log.info?.(
       `[wecom-runtime] inbound account=${event.accountId} transport=${event.transport} kind=${event.inboundKind} messageId=${event.messageId} peer=${event.conversation.peerKind}:${event.conversation.peerId}`,
+    );
+    this.log.info?.(
+      `[wecom-runtime] dispatch-start account=${event.accountId} transport=${event.transport} kind=${event.inboundKind} messageId=${event.messageId}`,
     );
     this.emitStatus();
 
     const trackedReplyHandle: ReplyHandle = {
       context: replyHandle.context,
       deliver: async (payload: ReplyPayload, info) => {
+        const deliverStartedAt = Date.now();
+        const textLen = payload.text?.trim().length ?? 0;
+        const mediaCount = (payload.mediaUrls?.length ?? 0) + (payload.mediaUrl ? 1 : 0);
+        this.log.info?.(
+          `[wecom-runtime] deliver-start account=${event.accountId} transport=${replyHandle.context.transport} kind=${info.kind} messageId=${event.messageId} textLen=${textLen} mediaCount=${mediaCount} reasoning=${String(payload.isReasoning === true)}`,
+        );
         await replyHandle.deliver(payload, info);
         this.runtimeStatus.lastOutboundAt = Date.now();
-        const outboundSummary = payload.text?.trim() || payload.mediaUrl || payload.mediaUrls?.[0] || info.kind;
+        const outboundSummary =
+          payload.text?.trim() || payload.mediaUrl || payload.mediaUrls?.[0] || info.kind;
         this.runtimeStatus.recentOutboundSummary = `${replyHandle.context.transport} ${outboundSummary.slice(0, 120)}`;
         this.log.info?.(
           `[wecom-runtime] outbound account=${event.accountId} transport=${replyHandle.context.transport} kind=${info.kind} messageId=${event.messageId} summary=${JSON.stringify(this.runtimeStatus.recentOutboundSummary)}`,
+        );
+        this.log.info?.(
+          `[wecom-runtime] deliver-done account=${event.accountId} transport=${replyHandle.context.transport} kind=${info.kind} messageId=${event.messageId} durationMs=${Date.now() - deliverStartedAt}`,
         );
         this.emitStatus();
       },
@@ -96,15 +109,25 @@ export class WecomAccountRuntime {
       },
     };
 
-    await dispatchInboundEvent({
-      core: this.core,
-      cfg: this.cfg,
-      store: this.store,
-      auditLog: this.auditLog,
-      mediaService: this.mediaService,
-      event,
-      replyHandle: trackedReplyHandle,
-    });
+    try {
+      await dispatchInboundEvent({
+        core: this.core,
+        cfg: this.cfg,
+        store: this.store,
+        auditLog: this.auditLog,
+        mediaService: this.mediaService,
+        event,
+        replyHandle: trackedReplyHandle,
+      });
+      this.log.info?.(
+        `[wecom-runtime] dispatch-done account=${event.accountId} transport=${event.transport} kind=${event.inboundKind} messageId=${event.messageId} durationMs=${Date.now() - dispatchStartedAt}`,
+      );
+    } catch (error) {
+      this.log.error?.(
+        `[wecom-runtime] dispatch-fail account=${event.accountId} transport=${event.transport} kind=${event.inboundKind} messageId=${event.messageId} durationMs=${Date.now() - dispatchStartedAt} error=${formatErrorMessage(error)}`,
+      );
+      throw error;
+    }
   }
 
   updateTransportSession(snapshot: TransportSessionSnapshot): void {
@@ -148,7 +171,7 @@ export class WecomAccountRuntime {
       lastDisconnectedAt: patch.lastDisconnectedAt ?? current?.lastDisconnectedAt,
       lastInboundAt: patch.lastInboundAt ?? current?.lastInboundAt,
       lastOutboundAt: patch.lastOutboundAt ?? current?.lastOutboundAt,
-      lastError: "lastError" in patch ? patch.lastError ?? undefined : current?.lastError,
+      lastError: "lastError" in patch ? (patch.lastError ?? undefined) : current?.lastError,
     };
     this.updateTransportSession(next);
   }
@@ -173,7 +196,7 @@ export class WecomAccountRuntime {
       authenticated: primarySession?.authenticated,
       lastError:
         primarySession?.lastError ??
-        (primarySession?.running ? null : this.runtimeStatus.lastError ?? null),
+        (primarySession?.running ? null : (this.runtimeStatus.lastError ?? null)),
       transportSessions: summarizeTransportSessions(sessions),
     };
   }
@@ -202,7 +225,10 @@ export class WecomAccountRuntime {
     this.runtimeStatus.lastErrorAt = Date.now();
     this.runtimeStatus.recentIssueCategory = params.category;
     this.runtimeStatus.recentIssueSummary = params.summary;
-    const sink = params.category === "runtime-error" || params.category === "fallback-delivery-failed" ? this.log.error : this.log.warn;
+    const sink =
+      params.category === "runtime-error" || params.category === "fallback-delivery-failed"
+        ? this.log.error
+        : this.log.warn;
     sink?.(
       `[wecom-runtime] issue account=${this.account.accountId} transport=${params.transport} category=${params.category} messageId=${params.messageId ?? "n/a"} summary=${params.summary}`,
     );

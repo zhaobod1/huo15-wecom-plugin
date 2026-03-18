@@ -1,5 +1,4 @@
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-
 import type { ReplyHandle } from "../types/index.js";
 import type { PreparedSession } from "./session-manager.js";
 
@@ -29,7 +28,7 @@ export async function dispatchRuntimeReply(params: {
   replyHandle: ReplyHandle;
 }): Promise<void> {
   const { core, cfg, session, replyHandle } = params;
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+  const result = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: session.ctx,
     cfg,
     replyOptions:
@@ -52,4 +51,17 @@ export async function dispatchRuntimeReply(params: {
       },
     },
   });
+
+  if (
+    replyHandle.context.transport === "bot-ws" &&
+    result &&
+    result.queuedFinal !== true &&
+    (result.counts?.block ?? 0) > 0
+  ) {
+    await dispatchReplyPayload({
+      replyHandle,
+      payload: { text: "" },
+      kind: "final",
+    });
+  }
 }

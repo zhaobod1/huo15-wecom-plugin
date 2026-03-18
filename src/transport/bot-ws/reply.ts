@@ -1,7 +1,13 @@
+import {
+  generateReqId,
+  type WsFrame,
+  type BaseMessage,
+  type EventMessage,
+  type WSClient,
+} from "@wecom/aibot-node-sdk";
 import { formatErrorMessage } from "openclaw/plugin-sdk";
-import { generateReqId, type WsFrame, type BaseMessage, type EventMessage, type WSClient } from "@wecom/aibot-node-sdk";
-
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
+import { uploadAndSendBotWsMedia } from "./media.js";
 
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
 const MAX_KEEPALIVE_MS = 120 * 1000; // Force stop keepalive after 120s if ignored
@@ -32,7 +38,14 @@ function isAckTimeoutError(error: unknown): boolean {
 }
 
 function isTerminalReplyError(error: unknown): boolean {
-  return isInvalidReqIdError(error) || isExpiredStreamUpdateError(error) || isAckTimeoutError(error);
+  return (
+    isInvalidReqIdError(error) || isExpiredStreamUpdateError(error) || isAckTimeoutError(error)
+  );
+}
+
+function formatMediaFailure(mediaUrl: string, error?: string, rejectReason?: string): string {
+  const reason = rejectReason || error || "unknown";
+  return `媒体发送失败：${mediaUrl} (${reason})`;
 }
 
 // Global registry to track active keepalives by peerId
@@ -54,6 +67,7 @@ export function createBotWsReplyHandle(params: {
 }): ReplyHandle {
   let streamId: string | undefined;
   let accumulatedText = "";
+  let deferredMediaUrls: string[] = [];
   const resolveStreamId = () => {
     streamId ||= generateReqId("stream");
     return streamId;
@@ -68,11 +82,15 @@ export function createBotWsReplyHandle(params: {
   // Extract peerId for clustering handles
   const body = params.frame.body as any;
   const peerId = String(
-    (body?.chattype === "group" ? body?.chatid || body?.from?.userid : body?.from?.userid) || "unknown"
+    (body?.chattype === "group" ? body?.chatid || body?.from?.userid : body?.from?.userid) ||
+      "unknown",
   );
   const reqId = params.frame.headers.req_id || "unknown";
 
-  const isEvent = params.inboundKind === "welcome" || params.inboundKind === "event" || params.inboundKind === "template-card-event";
+  const isEvent =
+    params.inboundKind === "welcome" ||
+    params.inboundKind === "event" ||
+    params.inboundKind === "template-card-event";
 
   const stopPlaceholderKeepalive = () => {
     if (placeholderKeepalive) {
@@ -83,7 +101,7 @@ export function createBotWsReplyHandle(params: {
       clearTimeout(placeholderTimeout);
       placeholderTimeout = undefined;
     }
-    
+
     // Remove from registry
     const keepalives = activeKeepalivesByPeer.get(peerId);
     if (keepalives) {
@@ -107,7 +125,8 @@ export function createBotWsReplyHandle(params: {
   const sendPlaceholder = () => {
     if (streamSettled || placeholderInFlight || isEvent) return;
     placeholderInFlight = true;
-    params.client.replyStream(params.frame, resolveStreamId(), placeholderText, false)
+    params.client
+      .replyStream(params.frame, resolveStreamId(), placeholderText, false)
       .catch((error) => {
         if (!isTerminalReplyError(error)) {
           return;
@@ -134,13 +153,27 @@ export function createBotWsReplyHandle(params: {
     }
   };
 
+  const mergeDeferredMediaUrls = (urls: string[]): string[] => {
+    if (urls.length === 0) {
+      return deferredMediaUrls;
+    }
+    const merged = [...deferredMediaUrls];
+    for (const url of urls) {
+      if (!merged.includes(url)) {
+        merged.push(url);
+      }
+    }
+    deferredMediaUrls = merged;
+    return deferredMediaUrls;
+  };
+
   if (params.autoSendPlaceholder !== false && !isEvent) {
     sendPlaceholder();
     placeholderKeepalive = setInterval(() => {
       sendPlaceholder();
     }, PLACEHOLDER_KEEPALIVE_MS);
-    
-    // Safety net: force stop keepalive after MAX_KEEPALIVE_MS 
+
+    // Safety net: force stop keepalive after MAX_KEEPALIVE_MS
     // in case the message is completely ignored by the core and never triggers deliver/fail
     placeholderTimeout = setTimeout(() => {
       stopPlaceholderKeepalive();
@@ -183,10 +216,22 @@ export function createBotWsReplyHandle(params: {
         return;
       }
 
-      const text = payload.text?.trim();
-      if (!text) return;
+      const text = payload.text?.trim() || "";
+      const incomingMediaUrls = payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
+      const hasIncomingMedia = incomingMediaUrls.length > 0;
+      if (info.kind !== "final" && hasIncomingMedia) {
+        mergeDeferredMediaUrls(incomingMediaUrls);
+      }
+      const mediaUrls =
+        info.kind === "final" ? mergeDeferredMediaUrls(incomingMediaUrls) : incomingMediaUrls;
+      if (!text && mediaUrls.length === 0) {
+        return;
+      }
 
       if (info.kind === "block") {
+        if (!text) {
+          return;
+        }
         accumulatedText = accumulatedText ? `${accumulatedText}\n${text}` : text;
       }
 
@@ -199,6 +244,46 @@ export function createBotWsReplyHandle(params: {
             : text
           : accumulatedText || text;
 
+      let finalText = outboundText;
+      if (info.kind === "final" && mediaUrls.length > 0) {
+        const mediaFailures: string[] = [];
+        const mediaNotes: string[] = [];
+        let mediaSent = 0;
+        for (const mediaUrl of mediaUrls) {
+          const result = await uploadAndSendBotWsMedia({
+            wsClient: params.client,
+            chatId: peerId,
+            mediaUrl,
+          });
+          if (result.ok) {
+            mediaSent += 1;
+            if (result.downgradeNote) {
+              mediaNotes.push(result.downgradeNote);
+            }
+            continue;
+          }
+          mediaFailures.push(formatMediaFailure(mediaUrl, result.error, result.rejectReason));
+        }
+
+        if (!finalText && mediaSent > 0) {
+          finalText = "文件已发送。";
+        }
+        if (mediaFailures.length > 0) {
+          finalText = finalText
+            ? `${finalText}\n\n${mediaFailures.join("\n")}`
+            : mediaFailures.join("\n");
+        }
+        if (mediaNotes.length > 0) {
+          finalText = finalText
+            ? `${finalText}\n\n${mediaNotes.join("\n")}`
+            : mediaNotes.join("\n");
+        }
+        deferredMediaUrls = [];
+      }
+      if (!finalText) {
+        return;
+      }
+
       // Event frames do not support streaming chunks
       if (isEvent && info.kind !== "final") {
         return;
@@ -209,19 +294,19 @@ export function createBotWsReplyHandle(params: {
         if (params.inboundKind === "welcome") {
           await params.client.replyWelcome(params.frame, {
             msgtype: "text",
-            text: { content: outboundText },
+            text: { content: finalText },
           });
         } else if (isEvent) {
           // Send push message for other events
           await params.client.sendMessage(peerId, {
             msgtype: "markdown",
-            markdown: { content: outboundText },
+            markdown: { content: finalText },
           });
         } else {
           await params.client.replyStream(
             params.frame,
             resolveStreamId(),
-            outboundText,
+            finalText,
             info.kind === "final",
           );
         }
@@ -243,17 +328,20 @@ export function createBotWsReplyHandle(params: {
       }
       const message = formatErrorMessage(error);
       const text = `WeCom WS reply failed: ${message}`;
-      
+
       try {
         if (params.inboundKind === "welcome") {
-            await params.client.replyWelcome(params.frame, { msgtype: "text", text: { content: text }});
+          await params.client.replyWelcome(params.frame, {
+            msgtype: "text",
+            text: { content: text },
+          });
         } else if (isEvent) {
-            await params.client.sendMessage(peerId, {
-              msgtype: "markdown",
-              markdown: { content: text },
-            });
+          await params.client.sendMessage(peerId, {
+            msgtype: "markdown",
+            markdown: { content: text },
+          });
         } else {
-            await params.client.replyStream(params.frame, resolveStreamId(), text, true);
+          await params.client.replyStream(params.frame, resolveStreamId(), text, true);
         }
       } catch (sendError) {
         params.onFail?.(sendError);

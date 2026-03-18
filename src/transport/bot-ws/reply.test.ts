@@ -1,7 +1,5 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-
 import type { WSClient } from "@wecom/aibot-node-sdk";
-
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createBotWsReplyHandle } from "./reply.js";
 
 type ReplyHandleParams = Parameters<typeof createBotWsReplyHandle>[0];
@@ -43,10 +41,10 @@ describe("createBotWsReplyHandle", () => {
     vi.advanceTimersByTime(3000);
     // Let promises flush
     await Promise.resolve();
-    
+
     expect(mockClient.replyStream).toHaveBeenCalledWith(
       expect.objectContaining({
-        headers: { req_id: "req-1" }
+        headers: { req_id: "req-1" },
       }),
       expect.any(String),
       "正在思考...",
@@ -69,7 +67,7 @@ describe("createBotWsReplyHandle", () => {
     vi.advanceTimersByTime(3000);
     // Flush the microtasks so `placeholderInFlight` becomes false
     for (let i = 0; i < 10; i++) await Promise.resolve();
-    
+
     // Now trigger the next timer
     vi.advanceTimersByTime(3000);
     for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -90,7 +88,7 @@ describe("createBotWsReplyHandle", () => {
     // Ensure interval is cleared
     vi.advanceTimersByTime(6000);
     await Promise.resolve();
-    expect(mockClient.replyStream).toHaveBeenCalledTimes(3); 
+    expect(mockClient.replyStream).toHaveBeenCalledTimes(3);
   });
 
   it("does not auto-send placeholder when disabled", async () => {
@@ -149,6 +147,73 @@ describe("createBotWsReplyHandle", () => {
     );
   });
 
+  it("streams block text even when media is deferred to final", async () => {
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-block-media" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    await handle.deliver(
+      {
+        text: "正文先发",
+        mediaUrls: ["/tmp/a.png", "/tmp/b.png"],
+        isReasoning: false,
+      },
+      { kind: "block" },
+    );
+
+    expect(mockClient.replyStream).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: { req_id: "req-block-media" } }),
+      expect.any(String),
+      "正文先发",
+      false,
+    );
+  });
+
+  it("stops placeholder keepalive when the first block contains media", async () => {
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-placeholder-media" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      placeholderContent: "正在思考...",
+    });
+
+    vi.advanceTimersByTime(3000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClient.replyStream).toHaveBeenCalledTimes(1);
+
+    await handle.deliver(
+      {
+        text: "正文先发",
+        mediaUrls: ["/tmp/a.png"],
+        isReasoning: false,
+      },
+      { kind: "block" },
+    );
+
+    vi.advanceTimersByTime(6000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(mockClient.replyStream).toHaveBeenCalledTimes(2);
+    expect(mockClient.replyStream).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ headers: { req_id: "req-placeholder-media" } }),
+      expect.any(String),
+      "正文先发",
+      false,
+    );
+  });
+
   it("swallows expired stream update errors during delivery", async () => {
     const expiredError = {
       headers: { req_id: "req-expired" },
@@ -157,7 +222,7 @@ describe("createBotWsReplyHandle", () => {
     };
     mockClient.replyStream.mockRejectedValueOnce(expiredError);
     const onFail = vi.fn();
-    
+
     const handle = createBotWsReplyHandle({
       client: mockClient,
       frame: {
@@ -178,7 +243,13 @@ describe("createBotWsReplyHandle", () => {
 
   it.each([
     [{ headers: { req_id: "req-invalid" }, errcode: 846605, errmsg: "invalid req_id" }],
-    [{ headers: { req_id: "req-expired" }, errcode: 846608, errmsg: "stream message update expired (>6 minutes), cannot update" }],
+    [
+      {
+        headers: { req_id: "req-expired" },
+        errcode: 846608,
+        errmsg: "stream message update expired (>6 minutes), cannot update",
+      },
+    ],
   ])("does not retry error reply when the ws reply window is already closed", async (error) => {
     const onFail = vi.fn();
     const handle = createBotWsReplyHandle({
@@ -218,13 +289,10 @@ describe("createBotWsReplyHandle", () => {
     handle.deliver({ text: "Event Reply", isReasoning: false }, { kind: "final" });
     await Promise.resolve();
 
-    expect(mockClient.sendMessage).toHaveBeenCalledWith(
-      "alice",
-      {
-        msgtype: "markdown",
-        markdown: { content: "Event Reply" },
-      }
-    );
+    expect(mockClient.sendMessage).toHaveBeenCalledWith("alice", {
+      msgtype: "markdown",
+      markdown: { content: "Event Reply" },
+    });
   });
 
   it("sends replyWelcome for welcome events", async () => {
@@ -246,7 +314,7 @@ describe("createBotWsReplyHandle", () => {
       {
         msgtype: "text",
         text: { content: "Hello Bob" },
-      }
+      },
     );
   });
 });
