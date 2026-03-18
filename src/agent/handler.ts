@@ -160,10 +160,12 @@ export type AgentInboundProcessDecision = {
 export function shouldProcessAgentInboundMessage(params: {
     msgType: string;
     fromUser: string;
+    chatId?: string;
     eventType?: string;
 }): AgentInboundProcessDecision {
     const msgType = String(params.msgType ?? "").trim().toLowerCase();
     const fromUser = String(params.fromUser ?? "").trim();
+    const chatId = String(params.chatId ?? "").trim();
     const normalizedFromUser = fromUser.toLowerCase();
     const eventType = String(params.eventType ?? "").trim().toLowerCase();
 
@@ -197,6 +199,12 @@ export function shouldProcessAgentInboundMessage(params: {
     }
 
     if (!fromUser) {
+        if (chatId) {
+            return {
+                shouldProcess: true,
+                reason: "missing_sender_but_group_chat",
+            };
+        }
         return {
             shouldProcess: false,
             reason: "missing_sender",
@@ -325,6 +333,7 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         const decision = shouldProcessAgentInboundMessage({
             msgType,
             fromUser,
+            chatId,
             eventType,
         });
         if (!decision.shouldProcess) {
@@ -391,6 +400,9 @@ async function processAgentMessage(params: {
 
     const isGroup = Boolean(chatId);
     const peerId = isGroup ? chatId! : fromUser;
+    const replyTarget = isGroup
+        ? ({ toUser: undefined, chatId: peerId } as const)
+        : ({ toUser: fromUser, chatId: undefined } as const);
     const eventType = String(msg.Event ?? "").trim().toLowerCase();
 
     const resolveInboundKind = (): WecomInboundKind => {
@@ -561,7 +573,7 @@ async function processAgentMessage(params: {
             `[wecom-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
         );
         try {
-            await sendAgentApiText({ agent, toUser: fromUser, chatId: undefined, text: prompt });
+            await sendAgentApiText({ agent, ...replyTarget, text: prompt });
             touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
             log?.(`[wecom-agent] routing guard prompt delivered to ${fromUser}`);
         } catch (err: unknown) {
@@ -627,9 +639,9 @@ async function processAgentMessage(params: {
     if (authz.shouldComputeAuth && authz.commandAuthorized !== true) {
         const prompt = buildWecomUnauthorizedCommandPrompt({ senderUserId: fromUser, dmPolicy: authz.dmPolicy, scope: "agent" });
         try {
-            await sendAgentApiText({ agent, toUser: fromUser, chatId: undefined, text: prompt });
+            await sendAgentApiText({ agent, ...replyTarget, text: prompt });
             touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
-            log?.(`[wecom-agent] unauthorized command: replied via DM to ${fromUser}`);
+            log?.(`[wecom-agent] unauthorized command: replied to ${isGroup ? `chat:${peerId}` : fromUser}`);
         } catch (err: unknown) {
             error?.(`[wecom-agent] unauthorized command reply failed: ${String(err)}`);
             auditSink?.({
@@ -689,11 +701,10 @@ const ctxPayload = core.channel.reply.finalizeInboundContext({
         try {
             await sendAgentApiText({ 
                 agent, 
-                toUser: fromUser, 
-                chatId: undefined, 
+                ...replyTarget,
                 text: "正在处理中，请稍候..." 
             });
-            log?.(`[wecom-agent] sent processing notification to ${fromUser}`);
+            log?.(`[wecom-agent] sent processing notification to ${isGroup ? `chat:${peerId}` : fromUser}`);
         } catch (err) {
             error?.(`[wecom-agent] failed to send processing notification: ${String(err)}`);
         }
@@ -731,9 +742,9 @@ const ctxPayload = core.channel.reply.finalizeInboundContext({
                             const chunk = text.slice(i, i + MAX_CHUNK_SIZE);
                             
                             try {
-                                await sendAgentApiText({ agent, toUser: fromUser, chatId: undefined, text: chunk });
+                                await sendAgentApiText({ agent, ...replyTarget, text: chunk });
                                 touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
-                                log?.(`[wecom-agent] reply chunk delivered (${info.kind}) to ${fromUser}, len=${chunk.length}`);
+                                log?.(`[wecom-agent] reply chunk delivered (${info.kind}) to ${isGroup ? `chat:${peerId}` : fromUser}, len=${chunk.length}`);
                                 
                                 // 强制延时：确保企业微信有足够时间处理顺序（优化：200ms → 50ms）
                                 if (i + MAX_CHUNK_SIZE < text.length) {

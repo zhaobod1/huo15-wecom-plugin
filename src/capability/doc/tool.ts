@@ -8,389 +8,479 @@ import { resolveAgentAccountOrUndefined } from "../bot/fallback-delivery.js";
 import { UpdateRequest } from "./types.js";
 
 function readString(value: unknown): string {
-    const trimmed = String(value ?? "").trim();
-    return trimmed || "";
+  const trimmed = String(value ?? "").trim();
+  return trimmed || "";
 }
 
 function mapDocTypeLabel(docType: number): string {
-    if (docType === 10) return "智能表格";
-    return docType === 4 ? "表格" : "文档";
+  if (docType === 10) return "智能表格";
+  return docType === 4 ? "表格" : "文档";
 }
 
 function summarizeDocInfo(info: any = {}) {
-    const docName = readString(info.doc_name) || "未命名文档";
-    const docType = mapDocTypeLabel(Number(info.doc_type));
-    return `${docType}"${docName}"信息已获取`;
+  const docName = readString(info.doc_name) || "未命名文档";
+  const docType = mapDocTypeLabel(Number(info.doc_type));
+  return `${docType}"${docName}"信息已获取`;
 }
 
 function summarizeDocAuth(result: any = {}) {
-    return `权限信息已获取：通知成员 ${result.docMembers?.length ?? 0}，协作者 ${result.coAuthList?.length ?? 0}`;
+  return `权限信息已获取：通知成员 ${result.docMembers?.length ?? 0}，协作者 ${result.coAuthList?.length ?? 0}`;
 }
 
 function readBooleanFlag(value: unknown): boolean | null {
-    return typeof value === "boolean" ? value : null;
+  return typeof value === "boolean" ? value : null;
 }
 
 function formatDocMemberRef(value: any) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
-    const userid = readString(value.userid ?? value.userId);
-    if (userid) return `userid:${userid}`;
-    const partyid = readString(value.partyid);
-    if (partyid) return `partyid:${partyid}`;
-    const tagid = readString(value.tagid);
-    if (tagid) return `tagid:${tagid}`;
-    return "";
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const userid = readString(value.userid ?? value.userId);
+  if (userid) return `userid:${userid}`;
+  const partyid = readString(value.partyid);
+  if (partyid) return `partyid:${partyid}`;
+  const tagid = readString(value.tagid);
+  if (tagid) return `tagid:${tagid}`;
+  return "";
 }
 
 function mapDocMemberList(values: any) {
-    return Array.isArray(values)
-        ? values.map((item) => formatDocMemberRef(item)).filter(Boolean)
-        : [];
+  return Array.isArray(values)
+    ? values.map((item) => formatDocMemberRef(item)).filter(Boolean)
+    : [];
 }
 
-function describeFlagState(value: boolean | null, enabledLabel: string, disabledLabel: string, unknownLabel = "未知") {
-    if (value === true) return enabledLabel;
-    if (value === false) return disabledLabel;
-    return unknownLabel;
+function describeFlagState(
+  value: boolean | null,
+  enabledLabel: string,
+  disabledLabel: string,
+  unknownLabel = "未知",
+) {
+  if (value === true) return enabledLabel;
+  if (value === false) return disabledLabel;
+  return unknownLabel;
 }
 
 function buildDocAuthDiagnosis(result: any = {}, requesterSenderId = "") {
-    const accessRule = result.accessRule && typeof result.accessRule === "object" ? result.accessRule : {};
-    const viewers = mapDocMemberList(result.docMembers);
-    const collaborators = mapDocMemberList(result.coAuthList);
-    const requester = readString(requesterSenderId);
-    const requesterViewerRef = requester ? `userid:${requester}` : "";
-    const requesterIsViewer = requesterViewerRef ? viewers.includes(requesterViewerRef) : false;
-    const requesterIsCollaborator = requesterViewerRef ? collaborators.includes(requesterViewerRef) : false;
-    const internalAccessEnabled = readBooleanFlag(accessRule.enable_corp_internal);
-    const externalAccessEnabled = readBooleanFlag(accessRule.enable_corp_external);
-    const externalShareAllowed = typeof accessRule.ban_share_external === "boolean"
-        ? !accessRule.ban_share_external
-        : null;
-    const likelyAnonymousLinkFailure = internalAccessEnabled === true && externalAccessEnabled === false;
-    const findings = [
-        `企业内访问：${describeFlagState(internalAccessEnabled, "开启", "关闭")}`,
-        `企业外访问：${describeFlagState(externalAccessEnabled, "开启", "关闭")}`,
-        `外部分享：${describeFlagState(externalShareAllowed, "允许", "禁止")}`,
-        `查看成员：${viewers.length}`,
-        `协作者：${collaborators.length}`,
-    ];
-    const recommendations: string[] = [];
-    if (likelyAnonymousLinkFailure) {
-        recommendations.push('当前更像是仅企业内可访问；匿名浏览器或未登录企业微信环境通常会显示"文档不存在"。');
+  const accessRule =
+    result.accessRule && typeof result.accessRule === "object"
+      ? result.accessRule
+      : {};
+  const viewers = mapDocMemberList(result.docMembers);
+  const collaborators = mapDocMemberList(result.coAuthList);
+  const requester = readString(requesterSenderId);
+  const requesterViewerRef = requester ? `userid:${requester}` : "";
+  const requesterIsViewer = requesterViewerRef
+    ? viewers.includes(requesterViewerRef)
+    : false;
+  const requesterIsCollaborator = requesterViewerRef
+    ? collaborators.includes(requesterViewerRef)
+    : false;
+  const internalAccessEnabled = readBooleanFlag(
+    accessRule.enable_corp_internal,
+  );
+  const externalAccessEnabled = readBooleanFlag(
+    accessRule.enable_corp_external,
+  );
+  const externalShareAllowed =
+    typeof accessRule.ban_share_external === "boolean"
+      ? !accessRule.ban_share_external
+      : null;
+  const likelyAnonymousLinkFailure =
+    internalAccessEnabled === true && externalAccessEnabled === false;
+  const findings = [
+    `企业内访问：${describeFlagState(internalAccessEnabled, "开启", "关闭")}`,
+    `企业外访问：${describeFlagState(externalAccessEnabled, "开启", "关闭")}`,
+    `外部分享：${describeFlagState(externalShareAllowed, "允许", "禁止")}`,
+    `查看成员：${viewers.length}`,
+    `协作者：${collaborators.length}`,
+  ];
+  const recommendations: string[] = [];
+  if (likelyAnonymousLinkFailure) {
+    recommendations.push(
+      '当前更像是仅企业内可访问；匿名浏览器或未登录企业微信环境通常会显示"文档不存在"。',
+    );
+  }
+  if (requester) {
+    if (requesterIsCollaborator) {
+      recommendations.push(`当前请求人 ${requester} 已在协作者列表中。`);
+    } else if (requesterIsViewer) {
+      recommendations.push(
+        `当前请求人 ${requester} 已在查看成员列表中，但还不是协作者。`,
+      );
+    } else {
+      recommendations.push(
+        `当前请求人 ${requester} 不在查看成员或协作者列表中。`,
+      );
     }
-    if (requester) {
-        if (requesterIsCollaborator) {
-            recommendations.push(`当前请求人 ${requester} 已在协作者列表中。`);
-        } else if (requesterIsViewer) {
-            recommendations.push(`当前请求人 ${requester} 已在查看成员列表中，但还不是协作者。`);
-        } else {
-            recommendations.push(`当前请求人 ${requester} 不在查看成员或协作者列表中。`);
-        }
-    }
-    return {
-        internalAccessEnabled,
-        externalAccessEnabled,
-        externalShareAllowed,
-        viewerCount: viewers.length,
-        collaboratorCount: collaborators.length,
-        viewers,
-        collaborators,
-        requesterSenderId: requester || undefined,
-        requesterRole: requesterIsCollaborator ? "collaborator" : requesterIsViewer ? "viewer" : requester ? "none" : "unknown",
-        likelyAnonymousLinkFailure,
-        findings,
-        recommendations,
-    };
+  }
+  return {
+    internalAccessEnabled,
+    externalAccessEnabled,
+    externalShareAllowed,
+    viewerCount: viewers.length,
+    collaboratorCount: collaborators.length,
+    viewers,
+    collaborators,
+    requesterSenderId: requester || undefined,
+    requesterRole: requesterIsCollaborator
+      ? "collaborator"
+      : requesterIsViewer
+        ? "viewer"
+        : requester
+          ? "none"
+          : "unknown",
+    likelyAnonymousLinkFailure,
+    findings,
+    recommendations,
+  };
 }
 
 function summarizeDocAuthDiagnosis(diagnosis: any = {}) {
-    const parts = Array.isArray(diagnosis.findings) ? diagnosis.findings : [];
-    return parts.length > 0 ? `文档权限诊断：${parts.join("，")}` : "文档权限诊断已完成";
+  const parts = Array.isArray(diagnosis.findings) ? diagnosis.findings : [];
+  return parts.length > 0
+    ? `文档权限诊断：${parts.join("，")}`
+    : "文档权限诊断已完成";
 }
 
 function buildDocIdUsageHint(docId?: string) {
-    const normalizedDocId = readString(docId);
-    if (!normalizedDocId) return "";
-    return `后续权限、分享和诊断操作请使用真实 docId：${normalizedDocId}；不要直接使用分享链接路径中的片段。`;
+  const normalizedDocId = readString(docId);
+  if (!normalizedDocId) return "";
+  return `后续权限、分享和诊断操作请使用真实 docId：${normalizedDocId}；不要直接使用分享链接路径中的片段。`;
 }
 
 function safeParseJson(text: string) {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function extractEmbeddedJson(html: string, variableName: string) {
-    const source = String(html ?? "");
-    if (!source) return null;
-    const marker = `window.${variableName}=`;
-    const start = source.indexOf(marker);
-    if (start < 0) return null;
-    const valueStart = start + marker.length;
-    const end = source.indexOf(";</script>", valueStart);
-    if (end < 0) return null;
-    return safeParseJson(source.slice(valueStart, end));
+  const source = String(html ?? "");
+  if (!source) return null;
+  const marker = `window.${variableName}=`;
+  const start = source.indexOf(marker);
+  if (start < 0) return null;
+  const valueStart = start + marker.length;
+  const end = source.indexOf(";</script>", valueStart);
+  if (end < 0) return null;
+  return safeParseJson(source.slice(valueStart, end));
 }
 
-function buildShareLinkDiagnosis(params: { shareUrl: string; finalUrl: string; status: number; contentType: string; basicClientVars: any }) {
-    const { shareUrl, finalUrl, status, contentType, basicClientVars } = params;
-    const parsedUrl = new URL(finalUrl || shareUrl);
-    const pathSegments = parsedUrl.pathname.split("/").filter(Boolean);
-    const pathResourceType = readString(pathSegments[0]);
-    const pathResourceId = readString(pathSegments[1]);
-    const shareCode = readString(parsedUrl.searchParams.get("scode"));
-    const userInfo = basicClientVars?.userInfo && typeof basicClientVars.userInfo === "object"
-        ? basicClientVars.userInfo
-        : {};
-    const docInfo = basicClientVars?.docInfo && typeof basicClientVars.docInfo === "object"
-        ? basicClientVars.docInfo
-        : {};
-    const padInfo = docInfo?.padInfo && typeof docInfo.padInfo === "object"
-        ? docInfo.padInfo
-        : {};
-    const ownerInfo = docInfo?.ownerInfo && typeof docInfo.ownerInfo === "object"
-        ? docInfo.ownerInfo
-        : {};
-    const shareInfo = docInfo?.shareInfo && typeof docInfo.shareInfo === "object"
-        ? docInfo.shareInfo
-        : {};
-    const aclInfo = docInfo?.aclInfo && typeof docInfo.aclInfo === "object"
-        ? docInfo.aclInfo
-        : {};
-    const userType = readString(userInfo.userType);
-    const padType = readString(padInfo.padType);
-    const padId = readString(padInfo.padId);
-    const padTitle = readString(padInfo.padTitle);
-    const isGuest = userType === "guest" || Number(userInfo.loginType) === 0;
-    const isBlankPage = padType === "blankpage";
-    const likelyUnavailableToGuest = isGuest && isBlankPage && !padTitle;
-    const findings = [
-        `HTTP ${String(status || "")}`.trim(),
-        `内容类型：${readString(contentType) || "未知"}`,
-        `访问身份：${userType || "未知"}`,
-        `页面类型：${padType || "未知"}`,
-        `路径资源：${pathResourceType || "未知"} / ${pathResourceId || "未知"}`,
-    ];
-    const recommendations: string[] = [];
-    if (likelyUnavailableToGuest) {
-        recommendations.push('当前链接对 guest/未登录企业微信环境返回 blankpage，外部访问会表现为打不开或像"文档不存在"。');
-    }
-    if (shareCode) {
-        recommendations.push(`当前链接带有分享码 scode=${shareCode}。如分享码过期或未生效，外部访问会失败。`);
-    }
-    if (pathResourceId && padId && pathResourceId !== padId) {
-        recommendations.push(`链接路径中的资源标识与页面 padId 不一致：path=${pathResourceId}，padId=${padId}。`);
-    }
-    if (pathResourceId && padId && pathResourceId === padId) {
-        recommendations.push("链接路径资源标识与页面 padId 一致，但这仍不等同于 Wedoc API 可用的真实 docId。");
-    }
-    return {
-        shareUrl,
-        finalUrl,
-        httpStatus: status,
-        contentType: readString(contentType) || undefined,
-        pathResourceType: pathResourceType || undefined,
-        pathResourceId: pathResourceId || undefined,
-        shareCode: shareCode || undefined,
-        userType: userType || undefined,
-        isGuest,
-        padId: padId || undefined,
-        padType: padType || undefined,
-        padTitle: padTitle || undefined,
-        ownerId: readString(ownerInfo.ownerId) || undefined,
-        hasShareInfo: Object.keys(shareInfo).length > 0,
-        hasAclInfo: Object.keys(aclInfo).length > 0,
-        likelyUnavailableToGuest,
-        findings,
-        recommendations,
-    };
+function buildShareLinkDiagnosis(params: {
+  shareUrl: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  basicClientVars: any;
+}) {
+  const { shareUrl, finalUrl, status, contentType, basicClientVars } = params;
+  const parsedUrl = new URL(finalUrl || shareUrl);
+  const pathSegments = parsedUrl.pathname.split("/").filter(Boolean);
+  const pathResourceType = readString(pathSegments[0]);
+  const pathResourceId = readString(pathSegments[1]);
+  const shareCode = readString(parsedUrl.searchParams.get("scode"));
+  const userInfo =
+    basicClientVars?.userInfo && typeof basicClientVars.userInfo === "object"
+      ? basicClientVars.userInfo
+      : {};
+  const docInfo =
+    basicClientVars?.docInfo && typeof basicClientVars.docInfo === "object"
+      ? basicClientVars.docInfo
+      : {};
+  const padInfo =
+    docInfo?.padInfo && typeof docInfo.padInfo === "object"
+      ? docInfo.padInfo
+      : {};
+  const ownerInfo =
+    docInfo?.ownerInfo && typeof docInfo.ownerInfo === "object"
+      ? docInfo.ownerInfo
+      : {};
+  const shareInfo =
+    docInfo?.shareInfo && typeof docInfo.shareInfo === "object"
+      ? docInfo.shareInfo
+      : {};
+  const aclInfo =
+    docInfo?.aclInfo && typeof docInfo.aclInfo === "object"
+      ? docInfo.aclInfo
+      : {};
+  const userType = readString(userInfo.userType);
+  const padType = readString(padInfo.padType);
+  const padId = readString(padInfo.padId);
+  const padTitle = readString(padInfo.padTitle);
+  const isGuest = userType === "guest" || Number(userInfo.loginType) === 0;
+  const isBlankPage = padType === "blankpage";
+  const likelyUnavailableToGuest = isGuest && isBlankPage && !padTitle;
+  const findings = [
+    `HTTP ${String(status || "")}`.trim(),
+    `内容类型：${readString(contentType) || "未知"}`,
+    `访问身份：${userType || "未知"}`,
+    `页面类型：${padType || "未知"}`,
+    `路径资源：${pathResourceType || "未知"} / ${pathResourceId || "未知"}`,
+  ];
+  const recommendations: string[] = [];
+  if (likelyUnavailableToGuest) {
+    recommendations.push(
+      '当前链接对 guest/未登录企业微信环境返回 blankpage，外部访问会表现为打不开或像"文档不存在"。',
+    );
+  }
+  if (shareCode) {
+    recommendations.push(
+      `当前链接带有分享码 scode=${shareCode}。如分享码过期或未生效，外部访问会失败。`,
+    );
+  }
+  if (pathResourceId && padId && pathResourceId !== padId) {
+    recommendations.push(
+      `链接路径中的资源标识与页面 padId 不一致：path=${pathResourceId}，padId=${padId}。`,
+    );
+  }
+  if (pathResourceId && padId && pathResourceId === padId) {
+    recommendations.push(
+      "链接路径资源标识与页面 padId 一致，但这仍不等同于 Wedoc API 可用的真实 docId。",
+    );
+  }
+  return {
+    shareUrl,
+    finalUrl,
+    httpStatus: status,
+    contentType: readString(contentType) || undefined,
+    pathResourceType: pathResourceType || undefined,
+    pathResourceId: pathResourceId || undefined,
+    shareCode: shareCode || undefined,
+    userType: userType || undefined,
+    isGuest,
+    padId: padId || undefined,
+    padType: padType || undefined,
+    padTitle: padTitle || undefined,
+    ownerId: readString(ownerInfo.ownerId) || undefined,
+    hasShareInfo: Object.keys(shareInfo).length > 0,
+    hasAclInfo: Object.keys(aclInfo).length > 0,
+    likelyUnavailableToGuest,
+    findings,
+    recommendations,
+  };
 }
 
 async function inspectWecomShareLink(params: { shareUrl: string }) {
-    const { shareUrl } = params;
-    const normalizedUrl = readString(shareUrl);
-    if (!normalizedUrl) throw new Error("shareUrl required");
-    let parsed;
-    try {
-        parsed = new URL(normalizedUrl);
-    } catch {
-        throw new Error("shareUrl must be a valid URL");
-    }
-    // To protect URLs containing underscores from markdown italic corruption in output, we ensure we return exactly what we got or wrap it later.
+  const { shareUrl } = params;
+  const normalizedUrl = readString(shareUrl);
+  if (!normalizedUrl) throw new Error("shareUrl required");
+  let parsed;
+  try {
+    parsed = new URL(normalizedUrl);
+  } catch {
+    throw new Error("shareUrl must be a valid URL");
+  }
+  // To protect URLs containing underscores from markdown italic corruption in output, we ensure we return exactly what we got or wrap it later.
 
-    const response = await fetch(parsed.toString(), {
-        headers: {
-            "user-agent": "OpenClaw-Wechat/1.0",
-            accept: "text/html,application/xhtml+xml",
-        },
-    });
-    const contentType = response.headers?.get("content-type") || "";
-    const html = await response.text();
-    const basicClientVars = extractEmbeddedJson(html, "basicClientVars");
-    const diagnosis = buildShareLinkDiagnosis({
-        shareUrl: normalizedUrl,
-        finalUrl: response.url || parsed.toString(),
-        status: response.status,
-        contentType,
-        basicClientVars,
-    });
-    return {
-        raw: {
-            httpStatus: response.status,
-            // Markdown italic protection for URLs
-            finalUrl: `\u00A0${response.url || parsed.toString()}\u00A0`.trim(),
-            contentType,
-            basicClientVars,
-        },
-        diagnosis,
-    };
+  const response = await fetch(parsed.toString(), {
+    headers: {
+      "user-agent": "OpenClaw-Wechat/1.0",
+      accept: "text/html,application/xhtml+xml",
+    },
+  });
+  const contentType = response.headers?.get("content-type") || "";
+  const html = await response.text();
+  const basicClientVars = extractEmbeddedJson(html, "basicClientVars");
+  const diagnosis = buildShareLinkDiagnosis({
+    shareUrl: normalizedUrl,
+    finalUrl: response.url || parsed.toString(),
+    status: response.status,
+    contentType,
+    basicClientVars,
+  });
+  return {
+    raw: {
+      httpStatus: response.status,
+      // Markdown italic protection for URLs
+      finalUrl: `\u00A0${response.url || parsed.toString()}\u00A0`.trim(),
+      contentType,
+      basicClientVars,
+    },
+    diagnosis,
+  };
 }
 
 function summarizeShareLinkDiagnosis(diagnosis: any = {}) {
-    const parts = Array.isArray(diagnosis.findings) ? diagnosis.findings : [];
-    return parts.length > 0 ? `分享链接校验：${parts.join("，")}` : "分享链接校验已完成";
+  const parts = Array.isArray(diagnosis.findings) ? diagnosis.findings : [];
+  return parts.length > 0
+    ? `分享链接校验：${parts.join("，")}`
+    : "分享链接校验已完成";
 }
 
 function summarizeSheetProperties(result: any = {}) {
-    return `表格属性已获取：工作表 ${result.properties?.length ?? 0}`;
+  return `表格属性已获取：工作表 ${result.properties?.length ?? 0}`;
 }
 
 function summarizeDocAccess(result: any = {}) {
-    const parts = [];
-    if (result.addedViewerCount) parts.push(`新增查看成员 ${result.addedViewerCount}`);
-    if (result.addedCollaboratorCount) parts.push(`新增协作者 ${result.addedCollaboratorCount}`);
-    if (result.removedViewerCount) parts.push(`移除查看成员 ${result.removedViewerCount}`);
-    if (result.removedCollaboratorCount) parts.push(`移除协作者 ${result.removedCollaboratorCount}`);
-    return parts.length > 0 ? `文档权限已更新：${parts.join("，")}` : "文档权限已更新";
+  const parts = [];
+  if (result.addedViewerCount)
+    parts.push(`新增查看成员 ${result.addedViewerCount}`);
+  if (result.addedCollaboratorCount)
+    parts.push(`新增协作者 ${result.addedCollaboratorCount}`);
+  if (result.removedViewerCount)
+    parts.push(`移除查看成员 ${result.removedViewerCount}`);
+  if (result.removedCollaboratorCount)
+    parts.push(`移除协作者 ${result.removedCollaboratorCount}`);
+  return parts.length > 0
+    ? `文档权限已更新：${parts.join("，")}`
+    : "文档权限已更新";
 }
 
 function summarizeFormInfo(result: any = {}) {
-    const title = readString(result.formInfo?.form_title) || "未命名收集表";
-    return `收集表"${title}"信息已获取`;
+  const title = readString(result.formInfo?.form_title) || "未命名收集表";
+  return `收集表"${title}"信息已获取`;
 }
 
 function summarizeFormAnswer(result: any = {}) {
-    return `收集表答案已获取：字段 ${result.answerList?.length ?? 0}`;
+  return `收集表答案已获取：字段 ${result.answerList?.length ?? 0}`;
 }
 
 function summarizeFormStatistic(result: any = {}) {
-    return `收集表统计已获取：请求 ${result.items?.length ?? 0}，成功 ${result.successCount ?? 0}`;
+  return `收集表统计已获取：请求 ${result.items?.length ?? 0}，成功 ${result.successCount ?? 0}`;
 }
 
 function summarizeAdvancedAccount(result: any = {}, action: string) {
-    if (action === "assign") return `高级功能账号分配任务已提交，jobid: ${result.jobid || "未知"}`;
-    if (action === "cancel") return `高级功能账号取消任务已提交，jobid: ${result.jobid || "未知"}`;
-    return `高级功能账号列表已获取：${result.userList?.length ?? 0} 个`;
+  if (action === "assign")
+    return `高级功能账号分配任务已提交，jobid: ${result.jobid || "未知"}`;
+  if (action === "cancel")
+    return `高级功能账号取消任务已提交，jobid: ${result.jobid || "未知"}`;
+  return `高级功能账号列表已获取：${result.userList?.length ?? 0} 个`;
 }
 
 function readMemberUserId(value: any) {
-    if (typeof value === "string" || typeof value === "number") {
-        return readString(value);
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
-    return readString(value.userid ?? value.userId);
+  if (typeof value === "string" || typeof value === "number") {
+    return readString(value);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  return readString(value.userid ?? value.userId);
 }
 
 function hasMemberUserId(values: any, requesterSenderId: string) {
-    const normalizedRequesterSenderId = readString(requesterSenderId);
-    if (!normalizedRequesterSenderId) return false;
-    return Array.isArray(values) && values.some((item) => readMemberUserId(item) === normalizedRequesterSenderId);
+  const normalizedRequesterSenderId = readString(requesterSenderId);
+  if (!normalizedRequesterSenderId) return false;
+  return (
+    Array.isArray(values) &&
+    values.some(
+      (item) => readMemberUserId(item) === normalizedRequesterSenderId,
+    )
+  );
 }
 
 function resolveCreateCollaborators(params: {
-    toolContext: any;
-    requestParams: any;
+  toolContext: any;
+  requestParams: any;
 }) {
-    const { toolContext, requestParams } = params;
-    const explicitCollaborators = Array.isArray(requestParams?.collaborators) ? [...requestParams.collaborators] : [];
-    const requesterSenderId = readString(toolContext?.senderId || toolContext?.requesterSenderId); // align with OpenClaw standard `senderId`
-    if (!requesterSenderId) return explicitCollaborators;
-    // By default, let's always auto-grant requester
-    if (hasMemberUserId(explicitCollaborators, requesterSenderId)) return explicitCollaborators;
-    if (hasMemberUserId(requestParams?.viewers, requesterSenderId)) return explicitCollaborators;
-    explicitCollaborators.push(requesterSenderId);
+  const { toolContext, requestParams } = params;
+  const explicitCollaborators = Array.isArray(requestParams?.collaborators)
+    ? [...requestParams.collaborators]
+    : [];
+  const requesterSenderId = readString(
+    toolContext?.senderId || toolContext?.requesterSenderId,
+  ); // align with OpenClaw standard `senderId`
+  if (!requesterSenderId) return explicitCollaborators;
+  // By default, let's always auto-grant requester
+  if (hasMemberUserId(explicitCollaborators, requesterSenderId))
     return explicitCollaborators;
+  if (hasMemberUserId(requestParams?.viewers, requesterSenderId))
+    return explicitCollaborators;
+  explicitCollaborators.push(requesterSenderId);
+  return explicitCollaborators;
 }
 
 function buildToolResult(payload: any) {
-    // To avoid formatting issues with URLs having underscores rendering as markdown Italics
-    if (payload.url) payload.url = `<${payload.url}>`;
-    if (payload.diagnosis?.finalUrl) payload.diagnosis.finalUrl = `<${payload.diagnosis.finalUrl}>`;
-    if (payload.diagnosis?.shareUrl) payload.diagnosis.shareUrl = `<${payload.diagnosis.shareUrl}>`;
-    return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-        details: payload,
-    };
+  // To avoid formatting issues with URLs having underscores rendering as markdown Italics
+  if (payload.url) payload.url = `<${payload.url}>`;
+  if (payload.diagnosis?.finalUrl)
+    payload.diagnosis.finalUrl = `<${payload.diagnosis.finalUrl}>`;
+  if (payload.diagnosis?.shareUrl)
+    payload.diagnosis.shareUrl = `<${payload.diagnosis.shareUrl}>`;
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+    ],
+    details: payload,
+  };
 }
 
 export function registerWecomDocTools(api: OpenClawPluginApi) {
-    if (typeof api?.registerTool !== "function") return;
-    const docClient = new WecomDocClient();
+  if (typeof api?.registerTool !== "function") return;
+  const docClient = new WecomDocClient();
 
-    api.registerTool((toolContext: any) => ({
-        name: "wecom_doc",
-        label: "WeCom Doc",
-        description: "企业微信文档工具。支持文档/表格/收集表完整CRUD操作、查看/协作者权限配置、属性查询以及分享打不开可用性诊断功能。",
-        parameters: wecomDocToolSchema,
-        async execute(_toolCallId, params: any) {
+  api.registerTool((toolContext: any) => ({
+    name: "wecom_doc",
+    label: "WeCom Doc",
+    description:
+      "企业微信文档工具。支持文档/表格/收集表完整CRUD操作、查看/协作者权限配置、属性查询以及分享打不开可用性诊断功能。",
+    parameters: wecomDocToolSchema,
+    async execute(_toolCallId, params: any) {
+      try {
+        let accountId = params.accountId || toolContext?.accountId || "default";
+        const account = resolveAgentAccountOrUndefined(api.config, accountId);
+        if (!account || !account.configured) {
+          throw new Error(
+            `WeCom account ${accountId} not configured for Doc API requirements`,
+          );
+        }
+
+        const action = params.action;
+        switch (action) {
+          case "create": {
+            const explicitCollaborators = Array.isArray(params.collaborators)
+              ? [...params.collaborators]
+              : [];
+            const result = await docClient.createDoc({
+              agent: account,
+              docName: params.docName,
+              docType: params.docType,
+              spaceId: params.spaceId,
+              fatherId: params.fatherId,
+              adminUsers: params.adminUsers,
+            });
+
+            // Auto-set security rules for better default permissions (internal users can edit)
             try {
-                let accountId = params.accountId || toolContext?.accountId || "default";
-                const account = resolveAgentAccountOrUndefined(api.config, accountId);
-                if (!account || !account.configured) {
-                    throw new Error(`WeCom account ${accountId} not configured for Doc API requirements`);
-                }
+              await docClient.setDocJoinRule({
+                agent: account,
+                docId: result.docId,
+                request: {
+                  enable_corp_internal: true,
+                  corp_internal_auth: 2, // 2 = edit permission
+                  enable_corp_external: false,
+                  ban_share_external: false,
+                },
+              });
+            } catch (err) {
+              // Non-fatal: document created, just default permissions may be read-only
+            }
 
-                const action = params.action;
-                switch (action) {
-                    case "create": {
-                        const explicitCollaborators = Array.isArray(params.collaborators) ? [...params.collaborators] : [];
-                        const result = await docClient.createDoc({
-                            agent: account,
-                            docName: params.docName,
-                            docType: params.docType,
-                            spaceId: params.spaceId,
-                            fatherId: params.fatherId,
-                            adminUsers: params.adminUsers,
-                        });
-
-                        // Auto-set security rules for better default permissions (internal users can edit)
-                        try {
-                            await docClient.setDocJoinRule({
-                                agent: account,
-                                docId: result.docId,
-                                request: {
-                                    enable_corp_internal: true,
-                                    corp_internal_auth: 2, // 2 = edit permission
-                                    enable_corp_external: false,
-                                    ban_share_external: false,
-                                },
-                            });
-                        } catch (err) {
-                            // Non-fatal: document created, just default permissions may be read-only
-                        }
-
-                        // Handle initial content (title/body separation) if provided
-                        // Supports: string (text) or {type: "text"|"image", content/url: string}
-                        let contentResult: any = null;
-                        if (Array.isArray(params.init_content) && params.init_content.length > 0) {
-                            try {
-                                // Helper: check if content item is an image
-                                const isImageItem = (item: any): boolean => {
-                                    if (typeof item === "object" && item !== null) {
-                                        return item.type === "image" || (item.url && !item.content);
-                                    }
-                                    if (typeof item === "string") {
-                                        // Detect image URLs
-                                        return item.startsWith("http") &&
-                                            (item.includes(".png") || item.includes(".jpg") ||
-                                             item.includes(".jpeg") || item.includes(".gif") ||
-                                             item.includes("qpic.cn") || item.includes("weixin.qq.com"));
-                                    }
-                                    return false;
-                                };
+            // Handle initial content (title/body separation) if provided
+            // Supports: string (text) or {type: "text"|"image", content/url: string}
+            let contentResult: any = null;
+            if (
+              Array.isArray(params.init_content) &&
+              params.init_content.length > 0
+            ) {
+              try {
+                // Helper: check if content item is an image
+                const isImageItem = (item: any): boolean => {
+                  if (typeof item === "object" && item !== null) {
+                    return item.type === "image" || (item.url && !item.content);
+                  }
+                  if (typeof item === "string") {
+                    // Detect image URLs
+                    return (
+                      item.startsWith("http") &&
+                      (item.includes(".png") ||
+                        item.includes(".jpg") ||
+                        item.includes(".jpeg") ||
+                        item.includes(".gif") ||
+                        item.includes("qpic.cn") ||
+                        item.includes("weixin.qq.com"))
+                    );
+                  }
+                  return false;
+                };
 
                                 // Helper: get image URL from content item
                                 const getImageUrl = (item: any): string => {
@@ -448,12 +538,12 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                     }
                                 };
 
-                                // Step 1: Insert first paragraph (title) at index 0
-                                if (params.init_content[0]) {
-                                    const firstItem = params.init_content[0];
-                                    if (isImageItem(firstItem)) {
-                                        // First item is image - upload first, then insert at index 0
-                                        const imgUrl = getImageUrl(firstItem);
+                // Step 1: Insert first paragraph (title) at index 0
+                if (params.init_content[0]) {
+                  const firstItem = params.init_content[0];
+                  if (isImageItem(firstItem)) {
+                    // First item is image - upload first, then insert at index 0
+                    const imgUrl = getImageUrl(firstItem);
 
                                         try {
                                             // Upload image to WeCom to get proper image_id
@@ -465,68 +555,81 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                             });
                                             console.log(`[wecom-doc] Title image uploaded: ${uploadResult.width}x${uploadResult.height}`);
 
-                                            // Insert image using uploaded URL
-                                            // Note: version is optional, API handles concurrency
-                                            await docClient.updateDocContent({
-                                                agent: account,
-                                                docId: result.docId,
-                                                requests: [{
-                                                    insert_image: {
-                                                        image_id: uploadResult.url,
-                                                        location: { index: 0 },
-                                                        width: uploadResult.width,
-                                                        height: uploadResult.height
-                                                    }
-                                                }]
-                                            });
-                                        } catch (uploadErr) {
-                                            console.error(`Failed to upload first image ${imgUrl}:`, uploadErr);
-                                            throw new Error(`First image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
-                                        }
-                                    } else {
-                                        const titleText = getText(firstItem);
-                                        await docClient.updateDocContent({
-                                            agent: account,
-                                            docId: result.docId,
-                                            requests: [{
-                                                insert_text: {
-                                                    text: titleText,
-                                                    location: { index: 0 }
-                                                }
-                                            }]
-                                        });
+                      // Insert image using uploaded URL
+                      // Note: version is optional, API handles concurrency
+                      await docClient.updateDocContent({
+                        agent: account,
+                        docId: result.docId,
+                        requests: [
+                          {
+                            insert_image: {
+                              image_id: uploadResult.url,
+                              location: { index: 0 },
+                              width: uploadResult.width,
+                              height: uploadResult.height,
+                            },
+                          },
+                        ],
+                      });
+                    } catch (uploadErr) {
+                      console.error(
+                        `Failed to upload first image ${imgUrl}:`,
+                        uploadErr,
+                      );
+                      throw new Error(
+                        `First image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+                      );
+                    }
+                  } else {
+                    const titleText = getText(firstItem);
+                    await docClient.updateDocContent({
+                      agent: account,
+                      docId: result.docId,
+                      requests: [
+                        {
+                          insert_text: {
+                            text: titleText,
+                            location: { index: 0 },
+                          },
+                        },
+                      ],
+                    });
 
-                                        // Apply Title Styling (Bold)
-                                        if (titleText.length > 0) {
-                                            await docClient.updateDocContent({
-                                                agent: account,
-                                                docId: result.docId,
-                                                requests: [{
-                                                    update_text_property: {
-                                                        text_property: { bold: true },
-                                                        ranges: [{ start_index: 0, length: titleText.length }]
-                                                    }
-                                                }]
-                                            });
-                                        }
-                                    }
-                                }
+                    // Apply Title Styling (Bold)
+                    if (titleText.length > 0) {
+                      await docClient.updateDocContent({
+                        agent: account,
+                        docId: result.docId,
+                        requests: [
+                          {
+                            update_text_property: {
+                              text_property: { bold: true },
+                              ranges: [
+                                { start_index: 0, length: titleText.length },
+                              ],
+                            },
+                          },
+                        ],
+                      });
+                    }
+                  }
+                }
 
-                                // Step 2: For subsequent items, append with proper paragraph handling
-                                // Per API spec: must get latest version and index before each batch_update
-                                for (let i = 1; i < params.init_content.length; i++) {
-                                    const item = params.init_content[i];
+                // Step 2: For subsequent items, append with proper paragraph handling
+                // Per API spec: must get latest version and index before each batch_update
+                for (let i = 1; i < params.init_content.length; i++) {
+                  const item = params.init_content[i];
 
-                                    // Refresh content to get latest document structure and version
-                                    // API requires: version difference ≤ 100 from latest
-                                    const currentContent = await docClient.getDocContent({
-                                        agent: account,
-                                        docId: result.docId,
-                                    });
+                  // Refresh content to get latest document structure and version
+                  // API requires: version difference ≤ 100 from latest
+                  const currentContent = await docClient.getDocContent({
+                    agent: account,
+                    docId: result.docId,
+                  });
 
-                                    // Get the end index of the document
-                                    const docEndIndex = currentContent.document.end;
-                                    const currentVersion = currentContent.version;
+                  // Get the end index of the document
+                  const docEndIndex = currentContent.document.end;
+                  const currentVersion = currentContent.version;
 
                                     if (isImageItem(item)) {
                                         // Insert image
@@ -542,67 +645,72 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                                             });
                                             console.log(`[wecom-doc] Item ${i} image uploaded: ${uploadResult.width}x${uploadResult.height}`);
 
-                                            // Step 2: Create new paragraph and insert image in one batch (2 operations ≤ 30)
-                                            // Per API spec: all indices are based on the same document snapshot
-                                            // insert_paragraph at docEndIndex creates a new paragraph
-                                            // insert_image at docEndIndex + 1 inserts into the newly created paragraph
-                                            await docClient.updateDocContent({
-                                                agent: account,
-                                                docId: result.docId,
-                                                version: currentVersion,  // Pass version for concurrency control
-                                                requests: [
-                                                    {
-                                                        insert_paragraph: {
-                                                            location: { index: docEndIndex }
-                                                        }
-                                                    },
-                                                    {
-                                                        insert_image: {
-                                                            image_id: uploadResult.url,
-                                                            location: { index: docEndIndex + 1 },
-                                                            width: uploadResult.width,
-                                                            height: uploadResult.height
-                                                        }
-                                                    }
-                                                ]
-                                            });
-                                        } catch (uploadErr) {
-                                            console.error(`Failed to upload image ${imgUrl}:`, uploadErr);
-                                            throw new Error(`Image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
-                                        }
-                                    } else {
-                                        const text = getText(item);
-                                        if (!text) continue;
+                      // Step 2: Create new paragraph and insert image in one batch (2 operations ≤ 30)
+                      // Per API spec: all indices are based on the same document snapshot
+                      // insert_paragraph at docEndIndex creates a new paragraph
+                      // insert_image at docEndIndex + 1 inserts into the newly created paragraph
+                      await docClient.updateDocContent({
+                        agent: account,
+                        docId: result.docId,
+                        version: currentVersion, // Pass version for concurrency control
+                        requests: [
+                          {
+                            insert_paragraph: {
+                              location: { index: docEndIndex },
+                            },
+                          },
+                          {
+                            insert_image: {
+                              image_id: uploadResult.url,
+                              location: { index: docEndIndex + 1 },
+                              width: uploadResult.width,
+                              height: uploadResult.height,
+                            },
+                          },
+                        ],
+                      });
+                    } catch (uploadErr) {
+                      console.error(
+                        `Failed to upload image ${imgUrl}:`,
+                        uploadErr,
+                      );
+                      throw new Error(
+                        `Image upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+                      );
+                    }
+                  } else {
+                    const text = getText(item);
+                    if (!text) continue;
 
-                                        // Insert text: create paragraph and insert text in one batch (2 operations ≤ 30)
-                                        // Per API spec: all indices are based on the same document snapshot
-                                        // insert_paragraph at docEndIndex creates a new paragraph
-                                        // insert_text at docEndIndex + 1 inserts into the newly created paragraph
-                                        await docClient.updateDocContent({
-                                            agent: account,
-                                            docId: result.docId,
-                                            version: currentVersion,  // Pass version for concurrency control
-                                            requests: [
-                                                {
-                                                    insert_paragraph: {
-                                                        location: { index: docEndIndex }
-                                                    }
-                                                },
-                                                {
-                                                    insert_text: {
-                                                        text: text,
-                                                        location: { index: docEndIndex + 1 }
-                                                    }
-                                                }
-                                            ]
-                                        });
-                                    }
-                                }
-                                contentResult = "init_content_populated";
-                            } catch (err) {
-                                contentResult = `content_failed: ${err instanceof Error ? err.message : String(err)}`;
-                            }
-                        }
+                    // Insert text: create paragraph and insert text in one batch (2 operations ≤ 30)
+                    // Per API spec: all indices are based on the same document snapshot
+                    // insert_paragraph at docEndIndex creates a new paragraph
+                    // insert_text at docEndIndex + 1 inserts into the newly created paragraph
+                    await docClient.updateDocContent({
+                      agent: account,
+                      docId: result.docId,
+                      version: currentVersion, // Pass version for concurrency control
+                      requests: [
+                        {
+                          insert_paragraph: {
+                            location: { index: docEndIndex },
+                          },
+                        },
+                        {
+                          insert_text: {
+                            text: text,
+                            location: { index: docEndIndex + 1 },
+                          },
+                        },
+                      ],
+                    });
+                  }
+                }
+                contentResult = "init_content_populated";
+              } catch (err) {
+                contentResult = `content_failed: ${err instanceof Error ? err.message : String(err)}`;
+              }
+            }
 
                         let accessResult: any = null;
                         if ((Array.isArray(params.viewers) && params.viewers.length > 0) || explicitCollaborators.length > 0) {
@@ -1287,40 +1395,48 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                         const fileContent = fs.readFileSync(filePath);
                         const base64Content = fileContent.toString("base64");
 
-                        const result = await docClient.uploadDocImage({
-                            agent: account,
-                            docId: params.docId,
-                            base64_content: base64Content,
-                        });
-                        return buildToolResult({
-                            ok: true,
-                            action,
-                            accountId: account.accountId,
-                            summary: "图片上传成功",
-                            details: {
-                                url: result.url,
-                                width: result.width,
-                                height: result.height,
-                                size: result.size,
-                            },
-                            raw: result.raw,
-                        });
-                    }
-                    default:
-                        throw new Error(`Unsupported action: ${String(action)}`);
-                }
-            } catch (err) {
-                return {
-                    content: [
-                        {
-                            type: "text" as const,
-                            text: JSON.stringify({ ok: false, action: params?.action, error: err instanceof Error ? err.message : String(err) }, null, 2),
-                        },
-                    ],
-                    details: {},
-                    isError: true,
-                };
-            }
-        },
-    }));
+            const result = await docClient.uploadDocImage({
+              agent: account,
+              docId: params.docId,
+              base64_content: base64Content,
+            });
+            return buildToolResult({
+              ok: true,
+              action,
+              accountId: account.accountId,
+              summary: "图片上传成功",
+              details: {
+                url: result.url,
+                width: result.width,
+                height: result.height,
+                size: result.size,
+              },
+              raw: result.raw,
+            });
+          }
+          default:
+            throw new Error(`Unsupported action: ${String(action)}`);
+        }
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  ok: false,
+                  action: params?.action,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          details: {},
+          isError: true,
+        };
+      }
+    },
+  }));
 }

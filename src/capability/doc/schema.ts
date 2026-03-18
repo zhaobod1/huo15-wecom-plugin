@@ -1,56 +1,57 @@
 const accountIdProperty = {
-    type: "string",
-    minLength: 1,
-    description: "可选：指定企业微信账号 ID；不填时按 agent 账号/默认账号自动选择",
+  type: "string",
+  minLength: 1,
+  description:
+    "可选：指定企业微信账号 ID；不填时按 agent 账号/默认账号自动选择",
 };
 
 const docTypeProperty = {
-    oneOf: [
-        {
-            type: "string",
-            enum: ["doc", "spreadsheet", "smart_table"],
-        },
-        {
-            type: "integer",
-            enum: [3, 4, 10],
-        },
-    ],
-    default: "doc",
-    description: "文档类型：doc=文档，spreadsheet=表格，smart_table=智能表格",
+  oneOf: [
+    {
+      type: "string",
+      enum: ["doc", "spreadsheet", "smart_table"],
+    },
+    {
+      type: "integer",
+      enum: [3, 4, 10],
+    },
+  ],
+  default: "doc",
+  description: "文档类型：doc=文档，spreadsheet=表格，smart_table=智能表格",
 };
 
 const sheetIdProperty = {
-    type: "string",
-    minLength: 1,
-    description: "子表 ID (sheet_id)",
+  type: "string",
+  minLength: 1,
+  description: "子表 ID (sheet_id)",
 };
 
 const docIdProperty = {
-    type: "string",
-    minLength: 1,
-    description: "文档 docid",
+  type: "string",
+  minLength: 1,
+  description: "文档 docid",
 };
 
 const formIdProperty = {
-    type: "string",
-    minLength: 1,
-    description: "收集表 formid",
+  type: "string",
+  minLength: 1,
+  description: "收集表 formid",
 };
 
 const shareUrlProperty = {
-    type: "string",
-    minLength: 1,
-    description: "企业微信文档分享链接",
+  type: "string",
+  minLength: 1,
+  description: "企业微信文档分享链接",
 };
 
 const genericObjectProperty = {
-    type: "object",
-    additionalProperties: true,
+  type: "object",
+  additionalProperties: true,
 };
 
 const nonEmptyObjectProperty = {
-    ...genericObjectProperty,
-    minProperties: 1,
+  ...genericObjectProperty,
+  minProperties: 1,
 };
 
 // --- Form Statistics Schema ---
@@ -75,372 +76,404 @@ const formStatisticRequestSchema = {
 // --- Doc Permission Schemas ---
 
 const coAuthListProperty = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["departmentid", "auth", "type"],
-        properties: {
-            departmentid: { type: "integer", description: "特定部门id" },
-            auth: { type: "integer", enum: [1, 2], description: "1:只读, 2:读写" },
-            type: { type: "integer", const: 2, description: "2:部门" }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["departmentid", "auth", "type"],
+    properties: {
+      departmentid: { type: "integer", description: "特定部门id" },
+      auth: { type: "integer", enum: [1, 2], description: "1:只读, 2:读写" },
+      type: { type: "integer", const: 2, description: "2:部门" },
+    },
+  },
 };
 
 const docMemberListProperty = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["type", "auth"],
-        properties: {
-            type: { type: "integer", const: 1, description: "1:用户" },
-            userid: { type: "string", description: "企业成员userid" },
-            tmp_external_userid: { type: "string", description: "外部用户临时id" },
-            auth: { type: "integer", enum: [1, 2, 7], description: "1:只读 2:读写 7:管理员" }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["type", "auth"],
+    properties: {
+      type: { type: "integer", const: 1, description: "1:用户" },
+      userid: { type: "string", description: "企业成员userid" },
+      tmp_external_userid: { type: "string", description: "外部用户临时id" },
+      auth: {
+        type: "integer",
+        enum: [1, 2, 7],
+        description: "1:只读 2:读写 7:管理员",
+      },
+    },
+  },
 };
 
 const delDocMemberListProperty = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["type"],
-        properties: {
-            type: { type: "integer", const: 1 },
-            userid: { type: "string" },
-            tmp_external_userid: { type: "string" }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["type"],
+    properties: {
+      type: { type: "integer", const: 1 },
+      userid: { type: "string" },
+      tmp_external_userid: { type: "string" },
+    },
+  },
 };
 
 const watermarkProperty = {
-    type: "object",
-    properties: {
-        margin_type: { type: "integer", enum: [1, 2], description: "1:稀疏, 2:紧密" },
-        show_visitor_name: { type: "boolean" },
-        show_text: { type: "boolean" },
-        text: { type: "string" }
-    }
+  type: "object",
+  properties: {
+    margin_type: {
+      type: "integer",
+      enum: [1, 2],
+      description: "1:稀疏, 2:紧密",
+    },
+    show_visitor_name: { type: "boolean" },
+    show_text: { type: "boolean" },
+    text: { type: "string" },
+  },
 };
 
 // --- Smartsheet Permission Schemas ---
 
 const fieldRuleListSchema = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["field_id", "can_edit", "can_insert", "can_view"],
-        properties: {
-            field_id: { type: "string" },
-            field_type: { type: "string" },
-            can_edit: { type: "boolean" },
-            can_insert: { type: "boolean" },
-            can_view: { type: "boolean" }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["field_id", "can_edit", "can_insert", "can_view"],
+    properties: {
+      field_id: { type: "string" },
+      field_type: { type: "string" },
+      can_edit: { type: "boolean" },
+      can_insert: { type: "boolean" },
+      can_view: { type: "boolean" },
+    },
+  },
 };
 
 const fieldPrivSchema = {
-    type: "object",
-    required: ["field_range_type", "field_rule_list"],
-    properties: {
-        field_range_type: { type: "integer", enum: [1, 2], description: "1-所有字段；2-部分字段" },
-        field_rule_list: fieldRuleListSchema,
-        field_default_rule: {
-             type: "object",
-             properties: {
-                 can_edit: { type: "boolean" },
-                 can_insert: { type: "boolean" },
-                 can_view: { type: "boolean" }
-             }
-        }
-    }
+  type: "object",
+  required: ["field_range_type", "field_rule_list"],
+  properties: {
+    field_range_type: {
+      type: "integer",
+      enum: [1, 2],
+      description: "1-所有字段；2-部分字段",
+    },
+    field_rule_list: fieldRuleListSchema,
+    field_default_rule: {
+      type: "object",
+      properties: {
+        can_edit: { type: "boolean" },
+        can_insert: { type: "boolean" },
+        can_view: { type: "boolean" },
+      },
+    },
+  },
 };
 
 const recordRuleListSchema = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["field_id", "oper_type"],
-        properties: {
-            field_id: { type: "string" },
-            field_type: { type: "string" },
-            oper_type: { type: "integer", description: "1-包含自己; 2-包含value; 3-不包含; 4-等于; 5-不等于; 6-为空; 7-非空" },
-            value: { type: "array", items: { type: "string" } }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["field_id", "oper_type"],
+    properties: {
+      field_id: { type: "string" },
+      field_type: { type: "string" },
+      oper_type: {
+        type: "integer",
+        description:
+          "1-包含自己; 2-包含value; 3-不包含; 4-等于; 5-不等于; 6-为空; 7-非空",
+      },
+      value: { type: "array", items: { type: "string" } },
+    },
+  },
 };
 
 const recordPrivSchema = {
-    type: "object",
-    required: ["record_range_type"],
-    properties: {
-        record_range_type: { type: "integer", enum: [1, 2, 3], description: "1-全部; 2-任意条件; 3-全部条件" },
-        record_rule_list: recordRuleListSchema,
-        other_priv: { type: "integer", enum: [1, 2], description: "1-不可编辑; 2-不可查看" }
-    }
+  type: "object",
+  required: ["record_range_type"],
+  properties: {
+    record_range_type: {
+      type: "integer",
+      enum: [1, 2, 3],
+      description: "1-全部; 2-任意条件; 3-全部条件",
+    },
+    record_rule_list: recordRuleListSchema,
+    other_priv: {
+      type: "integer",
+      enum: [1, 2],
+      description: "1-不可编辑; 2-不可查看",
+    },
+  },
 };
 
 const privListSchema = {
-    type: "array",
-    items: {
-        type: "object",
-        required: ["sheet_id", "priv"],
-        properties: {
-            sheet_id: { type: "string" },
-            priv: { 
-                oneOf: [{ type: "string" }, { type: "integer" }],
-                description: "1-全部权限；2-可编辑；3-仅浏览；4-无权限" 
-            },
-            can_insert_record: { type: "boolean" },
-            can_delete_record: { type: "boolean" },
-            can_create_modify_delete_view: { type: "boolean" },
-            field_priv: fieldPrivSchema,
-            record_priv: recordPrivSchema,
-            clear: { type: "boolean" }
-        }
-    }
+  type: "array",
+  items: {
+    type: "object",
+    required: ["sheet_id", "priv"],
+    properties: {
+      sheet_id: { type: "string" },
+      priv: {
+        oneOf: [{ type: "string" }, { type: "integer" }],
+        description: "1-全部权限；2-可编辑；3-仅浏览；4-无权限",
+      },
+      can_insert_record: { type: "boolean" },
+      can_delete_record: { type: "boolean" },
+      can_create_modify_delete_view: { type: "boolean" },
+      field_priv: fieldPrivSchema,
+      record_priv: recordPrivSchema,
+      clear: { type: "boolean" },
+    },
+  },
 };
 
 const memberRangeSchema = {
-    type: "object",
-    properties: {
-        userid_list: { type: "array", items: { type: "string" } }
-    }
+  type: "object",
+  properties: {
+    userid_list: { type: "array", items: { type: "string" } },
+  },
 };
 
 // --- Doc Content Update Schemas ---
 
 const locationProperty = {
-    type: "object",
-    required: ["index"],
-    properties: {
-        index: { type: "integer", minimum: 0, description: "位置索引" }
-    }
+  type: "object",
+  required: ["index"],
+  properties: {
+    index: { type: "integer", minimum: 0, description: "位置索引" },
+  },
 };
 
 const rangeProperty = {
-    type: "object",
-    required: ["start_index", "length"],
-    properties: {
-        start_index: { type: "integer", minimum: 0, description: "起始位置" },
-        length: { type: "integer", minimum: 1, description: "长度" }
-    }
+  type: "object",
+  required: ["start_index", "length"],
+  properties: {
+    start_index: { type: "integer", minimum: 0, description: "起始位置" },
+    length: { type: "integer", minimum: 1, description: "长度" },
+  },
 };
 
 const textPropertySchema = {
-    type: "object",
-    description: "文本属性",
-    properties: {
-        bold: { type: "boolean" },
-        italics: { type: "boolean" },
-        underline: { type: "boolean" },
-        strike: { type: "boolean" },
-        color: { type: "string", pattern: "^[0-9A-Fa-f]{6}$", description: "RRGGBB 格式颜色" },
-        background_color: { type: "string", pattern: "^[0-9A-Fa-f]{6}$", description: "RRGGBB 格式背景色" },
-        size: { type: "integer", description: "字体大小（half-points）" }
-    }
+  type: "object",
+  description: "文本属性",
+  properties: {
+    bold: { type: "boolean" },
+    italics: { type: "boolean" },
+    underline: { type: "boolean" },
+    strike: { type: "boolean" },
+    color: {
+      type: "string",
+      pattern: "^[0-9A-Fa-f]{6}$",
+      description: "RRGGBB 格式颜色",
+    },
+    background_color: {
+      type: "string",
+      pattern: "^[0-9A-Fa-f]{6}$",
+      description: "RRGGBB 格式背景色",
+    },
+    size: { type: "integer", description: "字体大小（half-points）" },
+  },
 };
 
 const insertTextRequest = {
-    type: "object",
-    required: ["text", "location"],
-    properties: {
-        text: { type: "string", minLength: 1 },
-        location: locationProperty
-    }
+  type: "object",
+  required: ["text", "location"],
+  properties: {
+    text: { type: "string", minLength: 1 },
+    location: locationProperty,
+  },
 };
 
 const replaceTextRequest = {
-    type: "object",
-    required: ["text", "ranges"],
-    properties: {
-        text: { type: "string" },
-        ranges: { type: "array", items: rangeProperty, minItems: 1 }
-    }
+  type: "object",
+  required: ["text", "ranges"],
+  properties: {
+    text: { type: "string" },
+    ranges: { type: "array", items: rangeProperty, minItems: 1 },
+  },
 };
 
 const deleteContentRequest = {
-    type: "object",
-    required: ["range"],
-    properties: {
-        range: rangeProperty
-    }
+  type: "object",
+  required: ["range"],
+  properties: {
+    range: rangeProperty,
+  },
 };
 
 const updateTextPropertyRequest = {
-    type: "object",
-    required: ["text_property", "ranges"],
-    properties: {
-        text_property: textPropertySchema,
-        ranges: { type: "array", items: rangeProperty, minItems: 1 }
-    }
+  type: "object",
+  required: ["text_property", "ranges"],
+  properties: {
+    text_property: textPropertySchema,
+    ranges: { type: "array", items: rangeProperty, minItems: 1 },
+  },
 };
 
 const insertImageRequest = {
-    type: "object",
-    required: ["image_id", "location"],
-    properties: {
-        image_id: { type: "string", description: "上传图片获得的 image_id/url" },
-        location: locationProperty,
-        width: { type: "integer", description: "宽(px)" },
-        height: { type: "integer", description: "高(px)" }
-    }
+  type: "object",
+  required: ["image_id", "location"],
+  properties: {
+    image_id: { type: "string", description: "上传图片获得的 image_id/url" },
+    location: locationProperty,
+    width: { type: "integer", description: "宽(px)" },
+    height: { type: "integer", description: "高(px)" },
+  },
 };
 
 const insertPageBreakRequest = {
-    type: "object",
-    required: ["location"],
-    properties: {
-        location: locationProperty
-    }
+  type: "object",
+  required: ["location"],
+  properties: {
+    location: locationProperty,
+  },
 };
 
 const insertTableRequest = {
-    type: "object",
-    required: ["rows", "cols", "location"],
-    properties: {
-        rows: { type: "integer", minimum: 1, maximum: 100 },
-        cols: { type: "integer", minimum: 1, maximum: 60 },
-        location: locationProperty
-    }
+  type: "object",
+  required: ["rows", "cols", "location"],
+  properties: {
+    rows: { type: "integer", minimum: 1, maximum: 100 },
+    cols: { type: "integer", minimum: 1, maximum: 60 },
+    location: locationProperty,
+  },
 };
 
 const insertParagraphRequest = {
-    type: "object",
-    description: "在指定位置插入段落。注意：请使用此操作来分段，而不是在 insert_text 中使用换行符。",
-    required: ["location"],
-    properties: {
-        location: locationProperty
-    }
+  type: "object",
+  description:
+    "在指定位置插入段落。注意：请使用此操作来分段，而不是在 insert_text 中使用换行符。",
+  required: ["location"],
+  properties: {
+    location: locationProperty,
+  },
 };
 
 // --- Spreadsheet Update Schemas ---
 
 const addSheetRequest = {
-    type: "object",
-    required: ["title"],
-    properties: {
-        title: { type: "string", minLength: 1 },
-        row_count: { type: "integer", minimum: 1 },
-        column_count: { type: "integer", minimum: 1 }
-    }
+  type: "object",
+  required: ["title"],
+  properties: {
+    title: { type: "string", minLength: 1 },
+    row_count: { type: "integer", minimum: 1 },
+    column_count: { type: "integer", minimum: 1 },
+  },
 };
 
 const deleteSheetRequest = {
-    type: "object",
-    required: ["sheet_id"],
-    properties: {
-        sheet_id: { type: "string", minLength: 1 }
-    }
+  type: "object",
+  required: ["sheet_id"],
+  properties: {
+    sheet_id: { type: "string", minLength: 1 },
+  },
 };
 
 const deleteDimensionRequest = {
-    type: "object",
-    required: ["sheet_id", "dimension", "start_index", "end_index"],
-    properties: {
-        sheet_id: { type: "string" },
-        dimension: { type: "string", enum: ["ROW", "COLUMN"] },
-        start_index: { type: "integer", minimum: 1 },
-        end_index: { type: "integer", minimum: 2 }
-    }
+  type: "object",
+  required: ["sheet_id", "dimension", "start_index", "end_index"],
+  properties: {
+    sheet_id: { type: "string" },
+    dimension: { type: "string", enum: ["ROW", "COLUMN"] },
+    start_index: { type: "integer", minimum: 1 },
+    end_index: { type: "integer", minimum: 2 },
+  },
 };
 
 const cellValueSchema = {
-    type: "object",
-    properties: {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    link: {
+      type: "object",
+      required: ["text", "url"],
+      properties: {
         text: { type: "string" },
-        link: {
-            type: "object",
-            required: ["text", "url"],
-            properties: {
-                text: { type: "string" },
-                url: { type: "string" }
-            }
-        }
-    }
+        url: { type: "string" },
+      },
+    },
+  },
 };
 
 const cellFormatSchema = {
-    type: "object",
-    properties: {
-        text_format: {
-            type: "object",
-            properties: {
-                bold: { type: "boolean" },
-                italic: { type: "boolean" },
-                strikethrough: { type: "boolean" },
-                underline: { type: "boolean" },
-                color: { 
-                    type: "object", 
-                    required: ["red", "green", "blue"],
-                    properties: {
-                        red: { type: "integer", minimum: 0, maximum: 255 },
-                        green: { type: "integer", minimum: 0, maximum: 255 },
-                        blue: { type: "integer", minimum: 0, maximum: 255 },
-                        alpha: { type: "integer", minimum: 0, maximum: 255 }
-                    }
-                },
-                font_size: { type: "integer" }
-            }
-        }
-    }
+  type: "object",
+  properties: {
+    text_format: {
+      type: "object",
+      properties: {
+        bold: { type: "boolean" },
+        italic: { type: "boolean" },
+        strikethrough: { type: "boolean" },
+        underline: { type: "boolean" },
+        color: {
+          type: "object",
+          required: ["red", "green", "blue"],
+          properties: {
+            red: { type: "integer", minimum: 0, maximum: 255 },
+            green: { type: "integer", minimum: 0, maximum: 255 },
+            blue: { type: "integer", minimum: 0, maximum: 255 },
+            alpha: { type: "integer", minimum: 0, maximum: 255 },
+          },
+        },
+        font_size: { type: "integer" },
+      },
+    },
+  },
 };
 
 const cellDataSchema = {
-    type: "object",
-    properties: {
-        cell_value: cellValueSchema,
-        cell_format: cellFormatSchema
-    }
+  type: "object",
+  properties: {
+    cell_value: cellValueSchema,
+    cell_format: cellFormatSchema,
+  },
 };
 
 const rowDataSchema = {
-    type: "object",
-    required: ["values"],
-    properties: {
-        values: {
-            type: "array",
-            items: cellDataSchema
-        }
-    }
+  type: "object",
+  required: ["values"],
+  properties: {
+    values: {
+      type: "array",
+      items: cellDataSchema,
+    },
+  },
 };
 
 const gridDataSchema = {
-    type: "object",
-    required: ["rows"],
-    properties: {
-        start_row: { type: "integer", default: 0 },
-        start_column: { type: "integer", default: 0 },
-        rows: {
-            type: "array",
-            items: rowDataSchema
-        }
-    }
+  type: "object",
+  required: ["rows"],
+  properties: {
+    start_row: { type: "integer", default: 0 },
+    start_column: { type: "integer", default: 0 },
+    rows: {
+      type: "array",
+      items: rowDataSchema,
+    },
+  },
 };
 
 const updateRangeRequest = {
-    type: "object",
-    required: ["sheet_id", "grid_data"],
-    properties: {
-        sheet_id: { type: "string" },
-        grid_data: gridDataSchema
-    }
+  type: "object",
+  required: ["sheet_id", "grid_data"],
+  properties: {
+    sheet_id: { type: "string" },
+    grid_data: gridDataSchema,
+  },
 };
 
-
 const docMemberEntryProperty = {
-    oneOf: [
-        { type: "string", minLength: 1 },
-        { type: "object", additionalProperties: true, minProperties: 1 },
-    ],
+  oneOf: [
+    { type: "string", minLength: 1 },
+    { type: "object", additionalProperties: true, minProperties: 1 },
+  ],
 };
 
 const docMemberEntryArrayProperty = {
-    type: "array",
-    minItems: 1,
-    items: docMemberEntryProperty,
+  type: "array",
+  minItems: 1,
+  items: docMemberEntryProperty,
 };
 
 export const wecomDocToolSchema = {

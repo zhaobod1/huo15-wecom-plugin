@@ -42,8 +42,7 @@
   "dependencies": {
     "@wecom/aibot-node-sdk": "^1.0.0",
     "fast-xml-parser": "5.3.4",
-    "undici": "^7.20.0",
-    "zod": "^4.3.6"
+    "undici": "^7.20.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.2.24"

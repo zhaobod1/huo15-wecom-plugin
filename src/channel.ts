@@ -27,16 +27,22 @@ const meta = {
   selectionLabel: "WeCom (企业微信)",
   docsPath: "/channels/wecom",
   docsLabel: "企业微信",
-  blurb: "企业微信官方推荐三方插件，默认 Bot WS 配置简单，支持主动发消息与 Agent 全能力。",
+  blurb:
+    "企业微信官方推荐三方插件，默认 Bot WS 配置简单，支持主动发消息与 Agent 全能力。",
   selectionDocsPrefix: "文档：",
   aliases: ["wechatwork", "wework", "qywx", "企微", "企业微信"],
   order: 85,
   quickstartAllowFrom: true,
 };
 
-function resolveAccountInboundPath(account: ResolvedWecomAccount): string | undefined {
+function resolveAccountInboundPath(
+  account: ResolvedWecomAccount,
+): string | undefined {
   const derivedPaths = resolveDerivedPathSummary(account.accountId);
-  if (account.bot?.primaryTransport === "webhook" && account.bot.webhookConfigured) {
+  if (
+    account.bot?.primaryTransport === "webhook" &&
+    account.bot.webhookConfigured
+  ) {
     return derivedPaths.botWebhook[0];
   }
   if (account.agent?.callbackConfigured) {
@@ -51,7 +57,9 @@ function normalizeWecomMessagingTarget(raw: string): string | undefined {
   if (/^wecom-agent:/i.test(trimmed)) {
     return trimmed;
   }
-  return trimmed.replace(/^(wecom|wechatwork|wework|qywx):/i, "").trim() || undefined;
+  return (
+    trimmed.replace(/^(wecom|wechatwork|wework|qywx):/i, "").trim() || undefined
+  );
 }
 
 export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
@@ -68,9 +76,6 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
     blockStreaming: false,
   },
   reload: { configPrefixes: ["channels.wecom"] },
-  // NOTE: We intentionally avoid Zod -> JSON Schema conversion at plugin-load time.
-  // Some OpenClaw runtime environments load plugin modules via jiti in a way that can
-  // surface zod `toJSONSchema()` binding issues (e.g. `this` undefined leading to `_zod` errors).
   // A permissive schema keeps config UX working while preventing startup failures.
   configSchema: {
     schema: {
@@ -81,8 +86,10 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
   },
   config: {
     listAccountIds: (cfg) => listWecomAccountIds(cfg as OpenClawConfig),
-    resolveAccount: (cfg, accountId) => resolveWecomAccount({ cfg: cfg as OpenClawConfig, accountId }),
-    defaultAccountId: (cfg) => resolveDefaultWecomAccountId(cfg as OpenClawConfig),
+    resolveAccount: (cfg, accountId) =>
+      resolveWecomAccount({ cfg: cfg as OpenClawConfig, accountId }),
+    defaultAccountId: (cfg) =>
+      resolveDefaultWecomAccountId(cfg as OpenClawConfig),
     setAccountEnabled: ({ cfg, accountId, enabled }) =>
       setAccountEnabledInConfigSection({
         cfg: cfg as OpenClawConfig,
@@ -126,9 +133,15 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
       };
     },
     resolveAllowFrom: ({ cfg, accountId }) => {
-      const account = resolveWecomAccount({ cfg: cfg as OpenClawConfig, accountId });
+      const account = resolveWecomAccount({
+        cfg: cfg as OpenClawConfig,
+        accountId,
+      });
       // 与其他渠道保持一致：直接返回 allowFrom，空则允许所有人
-      const allowFrom = account.agent?.config.dm?.allowFrom ?? account.bot?.config.dm?.allowFrom ?? [];
+      const allowFrom =
+        account.agent?.config.dm?.allowFrom ??
+        account.bot?.config.dm?.allowFrom ??
+        [];
       return allowFrom.map((entry) => String(entry));
     },
     formatAllowFrom: ({ allowFrom }) =>
@@ -170,20 +183,31 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
       transport: (snapshot as { transport?: string }).transport ?? null,
       ownerId: (snapshot as { ownerId?: string }).ownerId ?? null,
       health: (snapshot as { health?: string }).health ?? "idle",
-      ownerDriftAt: (snapshot as { ownerDriftAt?: number | null }).ownerDriftAt ?? null,
+      ownerDriftAt:
+        (snapshot as { ownerDriftAt?: number | null }).ownerDriftAt ?? null,
       connected: (snapshot as { connected?: boolean }).connected,
       authenticated: (snapshot as { authenticated?: boolean }).authenticated,
       lastStartAt: snapshot.lastStartAt ?? null,
       lastStopAt: snapshot.lastStopAt ?? null,
       lastError: snapshot.lastError ?? null,
-      lastErrorAt: (snapshot as { lastErrorAt?: number | null }).lastErrorAt ?? null,
+      lastErrorAt:
+        (snapshot as { lastErrorAt?: number | null }).lastErrorAt ?? null,
       lastInboundAt: snapshot.lastInboundAt ?? null,
       lastOutboundAt: snapshot.lastOutboundAt ?? null,
-      recentInboundSummary: (snapshot as { recentInboundSummary?: string | null }).recentInboundSummary ?? null,
-      recentOutboundSummary: (snapshot as { recentOutboundSummary?: string | null }).recentOutboundSummary ?? null,
-      recentIssueCategory: (snapshot as { recentIssueCategory?: string | null }).recentIssueCategory ?? null,
-      recentIssueSummary: (snapshot as { recentIssueSummary?: string | null }).recentIssueSummary ?? null,
-      transportSessions: (snapshot as { transportSessions?: string[] }).transportSessions ?? [],
+      recentInboundSummary:
+        (snapshot as { recentInboundSummary?: string | null })
+          .recentInboundSummary ?? null,
+      recentOutboundSummary:
+        (snapshot as { recentOutboundSummary?: string | null })
+          .recentOutboundSummary ?? null,
+      recentIssueCategory:
+        (snapshot as { recentIssueCategory?: string | null })
+          .recentIssueCategory ?? null,
+      recentIssueSummary:
+        (snapshot as { recentIssueSummary?: string | null })
+          .recentIssueSummary ?? null,
+      transportSessions:
+        (snapshot as { transportSessions?: string[] }).transportSessions ?? [],
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
     }),
@@ -199,25 +223,43 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
         enabled: account.enabled,
         configured: account.configured && !conflict,
         webhookPath: resolveAccountInboundPath(account),
-        primaryTransport: account.bot?.primaryTransport ?? (account.agent ? "agent-callback" : null),
-        transport: (runtime as { transport?: string } | undefined)?.transport ?? null,
+        primaryTransport:
+          account.bot?.primaryTransport ??
+          (account.agent ? "agent-callback" : null),
+        transport:
+          (runtime as { transport?: string } | undefined)?.transport ?? null,
         ownerId: (runtime as { ownerId?: string } | undefined)?.ownerId ?? null,
         health: (runtime as { health?: string } | undefined)?.health ?? "idle",
-        ownerDriftAt: (runtime as { ownerDriftAt?: number | null } | undefined)?.ownerDriftAt ?? null,
+        ownerDriftAt:
+          (runtime as { ownerDriftAt?: number | null } | undefined)
+            ?.ownerDriftAt ?? null,
         connected: (runtime as { connected?: boolean } | undefined)?.connected,
-        authenticated: (runtime as { authenticated?: boolean } | undefined)?.authenticated,
+        authenticated: (runtime as { authenticated?: boolean } | undefined)
+          ?.authenticated,
         running: runtime?.running ?? false,
         lastStartAt: runtime?.lastStartAt ?? null,
         lastStopAt: runtime?.lastStopAt ?? null,
         lastError: runtime?.lastError ?? conflict?.message ?? null,
-        lastErrorAt: (runtime as { lastErrorAt?: number | null } | undefined)?.lastErrorAt ?? null,
+        lastErrorAt:
+          (runtime as { lastErrorAt?: number | null } | undefined)
+            ?.lastErrorAt ?? null,
         lastInboundAt: runtime?.lastInboundAt ?? null,
         lastOutboundAt: runtime?.lastOutboundAt ?? null,
-        recentInboundSummary: (runtime as { recentInboundSummary?: string | null } | undefined)?.recentInboundSummary ?? null,
-        recentOutboundSummary: (runtime as { recentOutboundSummary?: string | null } | undefined)?.recentOutboundSummary ?? null,
-        recentIssueCategory: (runtime as { recentIssueCategory?: string | null } | undefined)?.recentIssueCategory ?? null,
-        recentIssueSummary: (runtime as { recentIssueSummary?: string | null } | undefined)?.recentIssueSummary ?? null,
-        transportSessions: (runtime as { transportSessions?: string[] } | undefined)?.transportSessions ?? [],
+        recentInboundSummary:
+          (runtime as { recentInboundSummary?: string | null } | undefined)
+            ?.recentInboundSummary ?? null,
+        recentOutboundSummary:
+          (runtime as { recentOutboundSummary?: string | null } | undefined)
+            ?.recentOutboundSummary ?? null,
+        recentIssueCategory:
+          (runtime as { recentIssueCategory?: string | null } | undefined)
+            ?.recentIssueCategory ?? null,
+        recentIssueSummary:
+          (runtime as { recentIssueSummary?: string | null } | undefined)
+            ?.recentIssueSummary ?? null,
+        transportSessions:
+          (runtime as { transportSessions?: string[] } | undefined)
+            ?.transportSessions ?? [],
         dmPolicy: account.bot?.config.dm?.policy ?? "pairing",
       };
     },

@@ -1,114 +1,83 @@
-import { z } from "zod";
-
-function bindToJsonSchema<T extends z.ZodTypeAny>(schema: T): T {
-  const schemaWithJson = schema as T & { toJSONSchema?: (...args: unknown[]) => unknown };
-  if (typeof schemaWithJson.toJSONSchema === "function") {
-    schemaWithJson.toJSONSchema = schemaWithJson.toJSONSchema.bind(schema);
-  }
-  return schema;
+export interface DmConfig {
+  policy?: "pairing" | "allowlist" | "open" | "disabled";
+  allowFrom?: (string | number)[];
 }
 
-const dmSchema = z
-  .object({
-    policy: z.enum(["pairing", "allowlist", "open", "disabled"]).optional(),
-    allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
-  })
-  .optional();
+export interface MediaConfig {
+  tempDir?: string;
+  retentionHours?: number;
+  cleanupOnStart?: boolean;
+  maxBytes?: number;
+}
 
-const mediaSchema = z
-  .object({
-    tempDir: z.string().optional(),
-    retentionHours: z.number().optional(),
-    cleanupOnStart: z.boolean().optional(),
-    maxBytes: z.number().optional(),
-  })
-  .optional();
+export interface NetworkConfig {
+  egressProxyUrl?: string;
+}
 
-const networkSchema = z
-  .object({
-    egressProxyUrl: z.string().optional(),
-  })
-  .optional();
+export interface RoutingConfig {
+  failClosedOnDefaultRoute?: boolean;
+}
 
-const routingSchema = z
-  .object({
-    failClosedOnDefaultRoute: z.boolean().optional(),
-  })
-  .optional();
+export interface BotWsConfig {
+  botId: string;
+  secret: string;
+}
 
-const botWsSchema = z
-  .object({
-    botId: z.string(),
-    secret: z.string(),
-  })
-  .optional();
+export interface BotWebhookConfig {
+  token: string;
+  encodingAESKey: string;
+  receiveId?: string;
+}
 
-const botWebhookSchema = z
-  .object({
-    token: z.string(),
-    encodingAESKey: z.string(),
-    receiveId: z.string().optional(),
-  })
-  .optional();
+export interface BotConfig {
+  primaryTransport?: "ws" | "webhook";
+  streamPlaceholderContent?: string;
+  welcomeText?: string;
+  dm?: DmConfig;
+  aibotid?: string;
+  botIds?: string[];
+  ws?: BotWsConfig;
+  webhook?: BotWebhookConfig;
+}
 
-const botSchema = z
-  .object({
-    primaryTransport: z.enum(["ws", "webhook"]).optional(),
-    streamPlaceholderContent: z.string().optional(),
-    welcomeText: z.string().optional(),
-    dm: dmSchema,
-    aibotid: z.string().optional(),
-    botIds: z.array(z.string()).optional(),
-    ws: botWsSchema,
-    webhook: botWebhookSchema,
-  })
-  .optional();
+export interface AgentConfig {
+  corpId: string;
+  agentSecret?: string;
+  corpSecret?: string;
+  agentId?: number | string;
+  token: string;
+  encodingAESKey: string;
+  welcomeText?: string;
+  dm?: DmConfig;
+}
 
-const agentSchema = z
-  .object({
-    corpId: z.string(),
-    agentSecret: z.string().optional(),
-    corpSecret: z.string().optional(),
-    agentId: z.union([z.number(), z.string()]).optional(),
-    token: z.string(),
-    encodingAESKey: z.string(),
-    welcomeText: z.string().optional(),
-    dm: dmSchema,
-  })
-  .refine((value) => Boolean(value.agentSecret?.trim() || value.corpSecret?.trim()), {
-    path: ["agentSecret"],
-    message: "agentSecret 不能为空",
-  })
-  .optional();
+export interface DynamicAgentsConfig {
+  enabled?: boolean;
+  dmCreateAgent?: boolean;
+  groupEnabled?: boolean;
+  adminUsers?: string[];
+}
 
-const dynamicAgentsSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    dmCreateAgent: z.boolean().optional(),
-    groupEnabled: z.boolean().optional(),
-    adminUsers: z.array(z.string()).optional(),
-  })
-  .optional();
+export interface AccountConfig {
+  enabled?: boolean;
+  name?: string;
+  bot?: BotConfig;
+  agent?: AgentConfig;
+}
 
-const accountSchema = z.object({
-  enabled: z.boolean().optional(),
-  name: z.string().optional(),
-  bot: botSchema,
-  agent: agentSchema,
-});
+export interface WecomConfigInput {
+  enabled?: boolean;
+  bot?: BotConfig;
+  agent?: AgentConfig;
+  accounts?: Record<string, AccountConfig>;
+  defaultAccount?: string;
+  media?: MediaConfig;
+  network?: NetworkConfig;
+  routing?: RoutingConfig;
+  dynamicAgents?: DynamicAgentsConfig;
+}
 
-export const WecomConfigSchema = bindToJsonSchema(
-  z.object({
-    enabled: z.boolean().optional(),
-    bot: botSchema,
-    agent: agentSchema,
-    accounts: z.record(z.string(), accountSchema).optional(),
-    defaultAccount: z.string().optional(),
-    media: mediaSchema,
-    network: networkSchema,
-    routing: routingSchema,
-    dynamicAgents: dynamicAgentsSchema,
-  }),
-);
-
-export type WecomConfigInput = z.infer<typeof WecomConfigSchema>;
+/**
+ * @deprecated No longer a Zod schema. Kept as a type-only export for backward compatibility.
+ */
+export const WecomConfigSchema = undefined;
