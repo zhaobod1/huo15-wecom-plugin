@@ -96,14 +96,33 @@ jobs:
         id: notes
         run: |
           set -euo pipefail
-          CHANGELOG_FILE="changelog/v${{ steps.meta.outputs.version }}.md"
-          if [ -f "${CHANGELOG_FILE}" ]; then
+          VERSION="${{ steps.meta.outputs.version }}"
+          CHANGELOG_DIR="changelog"
+          CHANGELOG_FILE=""
+          CANDIDATES=("v${VERSION}.md")
+
+          IFS='.' read -r major minor patch <<< "${VERSION}"
+          if [[ -n "${major:-}" && -n "${minor:-}" && -n "${patch:-}" && "${patch}" =~ ^[0-9]+$ && ${#patch} -gt 2 ]]; then
+            trimmed_patch="${patch%?}"
+            CANDIDATES+=("v${major}.${minor}.${trimmed_patch}.md")
+          fi
+
+          echo "Release notes candidates:"
+          for candidate in "${CANDIDATES[@]}"; do
+            path="${CHANGELOG_DIR}/${candidate}"
+            echo " - ${path}"
+            if [[ -z "${CHANGELOG_FILE}" && -f "${path}" ]]; then
+              CHANGELOG_FILE="${path}"
+            fi
+          done
+
+          if [[ -n "${CHANGELOG_FILE}" ]]; then
             echo "Using changelog file: ${CHANGELOG_FILE}"
             cp "${CHANGELOG_FILE}" /tmp/release-body.md
           else
-            echo "Changelog file missing: ${CHANGELOG_FILE}; using fallback notes."
+            echo "No matching changelog file found; using fallback notes."
             {
-              echo "# @yanhaidao/wecom v${{ steps.meta.outputs.version }}"
+              echo "# @yanhaidao/wecom v${VERSION}"
               echo
               if [ "${{ steps.npm_check.outputs.exists }}" = "true" ]; then
                 echo "- npm publish skipped: version already exists."
