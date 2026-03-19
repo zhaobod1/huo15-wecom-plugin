@@ -205,25 +205,36 @@ function flattenDeepNesting(text: string): string {
 
 function normalizeTables(text: string): string {
   // Pass 1: stitch broken table rows back together.
-  // Models sometimes split a single row across two lines: the first starts
-  // with | but does not end with |, and the second is a continuation that
-  // doesn't start with |.  Re-join them before block detection.
+  // Models may split a single row across multiple lines in several ways:
+  //   a) first part ends without |, continuation does NOT start with |
+  //   b) first part ends without |, blank line(s), continuation starts with |
+  //   c) first part ends without |, blank line(s), lone | on its own line
+  // We absorb any blank lines that follow an incomplete row and keep merging
+  // until the accumulated row ends with |.
   const rawLines = text.split("\n");
   const stitched: string[] = [];
 
-  for (const line of rawLines) {
+  for (let idx = 0; idx < rawLines.length; idx++) {
+    const line = rawLines[idx]!;
+    const trimmed = line.trim();
     const prev = stitched[stitched.length - 1];
-    if (
-      prev !== undefined &&
-      prev.trim().startsWith("|") &&
-      !prev.trim().endsWith("|") &&
-      !line.trim().startsWith("|") &&
-      line.includes("|")
-    ) {
-      stitched[stitched.length - 1] = prev + line;
-    } else {
-      stitched.push(line);
+    const prevTrim = prev !== undefined ? prev.trim() : "";
+    const prevIsIncomplete = prevTrim.startsWith("|") && !prevTrim.endsWith("|");
+
+    if (prevIsIncomplete) {
+      if (trimmed === "") {
+        // Blank line inside a broken row — absorb it and keep waiting for the rest
+        continue;
+      }
+      if (trimmed.includes("|")) {
+        // Continuation (starting with | or not) — stitch into the pending row
+        stitched[stitched.length - 1] =
+          prev! + (trimmed.startsWith("|") ? trimmed : line);
+        continue;
+      }
     }
+
+    stitched.push(line);
   }
 
   // Pass 2: detect and normalize table blocks.
