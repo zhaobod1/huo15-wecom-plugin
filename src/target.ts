@@ -26,6 +26,18 @@ export interface ScopedWecomTarget {
     rawTarget: string;
 }
 
+export function buildWecomContextTarget(contextToken: string): string {
+    return `wecom:context:${contextToken}`;
+}
+
+export function resolveWecomContextTarget(raw: string | undefined): { contextToken: string } | undefined {
+    const trimmed = raw?.trim();
+    if (!trimmed) return undefined;
+    const match = trimmed.match(/^(?:wecom|wechatwork|wework|qywx):context:(.+)$/i);
+    const contextToken = match?.[1]?.trim();
+    return contextToken ? { contextToken } : undefined;
+}
+
 /**
  * Parses a raw target string into a WeComTarget object.
  * 解析原始目标字符串为 WeComTarget 对象。
@@ -86,16 +98,16 @@ export function resolveWecomTarget(raw: string | undefined, options?: { preferUs
         return { chatid: clean };
     }
 
-    // Pure digits: Default to Party (纯数字默认为部门)
-    // 原因：1) 定时任务可能直接配置 to: "1" 发送给根部门
-    //      2) 企业微信官方文档示例使用纯数字表示部门
-    //      3) 用户 ID 应该使用显式前缀 "user:xxx"
-    // 但如果 preferUserForDigits 为 true 则视为 User ID（用于 agent scoped 场景）
+    // Pure digits: Default to User (纯数字默认为用户)
+    // 原因：1) Bot WS 主动推送只接受 touser/chatid，不接受 toparty/totag
+    //      2) 用户 ID 在企业微信中常为纯数字
+    //      3) 部门推送应使用显式前缀 "party:xxx" 或通过 Agent 模式
+    // 如果确实需要发送到部门，请使用 party: 前缀或 Agent 路径
     if (/^\d+$/.test(clean)) {
-        if (options?.preferUserForDigits) {
-            return { touser: clean };
+        if (options?.preferUserForDigits === false) {
+            return { toparty: clean };
         }
-        return { toparty: clean };
+        return { touser: clean };
     }
 
     // Default to User (默认为用户)
