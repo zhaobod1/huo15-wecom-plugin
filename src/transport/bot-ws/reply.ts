@@ -5,7 +5,7 @@ import {
   type EventMessage,
   type WSClient,
 } from "@wecom/aibot-node-sdk";
-import { formatErrorMessage } from "openclaw/plugin-sdk";
+import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
 import { getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
@@ -356,6 +356,10 @@ export function createBotWsReplyHandle(params: {
         return;
       }
       params.onFail?.(error);
+    },
+    markExternalActivity: () => {
+      notifyPeerActive();
+      stopPlaceholderKeepalive();
     },
   };
 }

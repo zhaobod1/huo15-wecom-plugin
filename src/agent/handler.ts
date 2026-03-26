@@ -668,6 +668,8 @@ async function processAgentMessage(params: {
     source: "agent-callback",
     messageId: extractMsgId(msg) ?? undefined,
     sessionKey: route.sessionKey,
+    peerKind: isGroup ? "group" : "direct",
+    peerId,
   });
 
   // 构建上下文

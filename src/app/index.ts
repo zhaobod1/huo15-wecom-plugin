@@ -1,10 +1,13 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
 import { clearWecomSourceAccount } from "../runtime/source-registry.js";
 import { WecomAccountRuntime } from "./account-runtime.js";
+import type { ReplyHandle } from "../types/index.js";
 
 let runtime: PluginRuntime | null = null;
 const runtimes = new Map<string, WecomAccountRuntime>();
 const botWsPushHandles = new Map<string, BotWsPushHandle>();
+const activeBotWsReplyHandlesBySession = new Map<string, ReplyHandle>();
+const activeBotWsReplyHandlesByPeer = new Map<string, ReplyHandle>();
 
 export type BotWsPushHandle = {
   isConnected: () => boolean;
@@ -28,6 +31,28 @@ export type BotWsPushHandle = {
     error?: string;
   }>;
 };
+
+function normalizeOptional(value: string | null | undefined): string | undefined {
+  const trimmed = String(value ?? "").trim();
+  return trimmed || undefined;
+}
+
+function normalizePeerId(value: string | null | undefined): string | undefined {
+  const trimmed = normalizeOptional(value);
+  return trimmed ? trimmed.toLowerCase() : undefined;
+}
+
+function buildSessionHandleKey(accountId: string, sessionKey: string): string {
+  return `${accountId}::session::${sessionKey}`;
+}
+
+function buildPeerHandleKey(
+  accountId: string,
+  peerKind: "direct" | "group",
+  peerId: string,
+): string {
+  return `${accountId}::peer::${peerKind}::${peerId}`;
+}
 
 export function setWecomRuntime(next: PluginRuntime): void {
   runtime = next;
@@ -61,6 +86,87 @@ export function getBotWsPushHandle(accountId: string): BotWsPushHandle | undefin
   return botWsPushHandles.get(accountId);
 }
 
+export function registerActiveBotWsReplyHandle(params: {
+  accountId: string;
+  sessionKey?: string | null;
+  peerKind?: "direct" | "group" | null;
+  peerId?: string | null;
+  handle: ReplyHandle;
+}): void {
+  const accountId = normalizeOptional(params.accountId);
+  const sessionKey = normalizeOptional(params.sessionKey);
+  const peerId = normalizePeerId(params.peerId);
+  if (!accountId) {
+    return;
+  }
+  if (sessionKey) {
+    activeBotWsReplyHandlesBySession.set(buildSessionHandleKey(accountId, sessionKey), params.handle);
+  }
+  if ((params.peerKind === "direct" || params.peerKind === "group") && peerId) {
+    activeBotWsReplyHandlesByPeer.set(
+      buildPeerHandleKey(accountId, params.peerKind, peerId),
+      params.handle,
+    );
+  }
+}
+
+export function getActiveBotWsReplyHandle(params: {
+  accountId: string;
+  sessionKey?: string | null;
+  peerKind?: "direct" | "group" | null;
+  peerId?: string | null;
+}): ReplyHandle | undefined {
+  const accountId = normalizeOptional(params.accountId);
+  const sessionKey = normalizeOptional(params.sessionKey);
+  const peerId = normalizePeerId(params.peerId);
+  if (!accountId) {
+    return undefined;
+  }
+  if (sessionKey) {
+    const handle = activeBotWsReplyHandlesBySession.get(
+      buildSessionHandleKey(accountId, sessionKey),
+    );
+    if (handle) {
+      return handle;
+    }
+  }
+  if ((params.peerKind === "direct" || params.peerKind === "group") && peerId) {
+    return activeBotWsReplyHandlesByPeer.get(
+      buildPeerHandleKey(accountId, params.peerKind, peerId),
+    );
+  }
+  return undefined;
+}
+
+export function unregisterActiveBotWsReplyHandle(params: {
+  accountId: string;
+  sessionKey?: string | null;
+  peerKind?: "direct" | "group" | null;
+  peerId?: string | null;
+  handle?: ReplyHandle;
+}): void {
+  const accountId = normalizeOptional(params.accountId);
+  const sessionKey = normalizeOptional(params.sessionKey);
+  const peerId = normalizePeerId(params.peerId);
+  if (!accountId) {
+    return;
+  }
+  if (sessionKey) {
+    const key = buildSessionHandleKey(accountId, sessionKey);
+    const current = activeBotWsReplyHandlesBySession.get(key);
+    if (!params.handle || current === params.handle) {
+      activeBotWsReplyHandlesBySession.delete(key);
+    }
+  }
+  if ((params.peerKind === "direct" || params.peerKind === "group") && peerId) {
+    const key = buildPeerHandleKey(accountId, params.peerKind, peerId);
+    const current = activeBotWsReplyHandlesByPeer.get(key);
+    if (!params.handle || current === params.handle) {
+      activeBotWsReplyHandlesByPeer.delete(key);
+    }
+  }
+}
+
 export function unregisterBotWsPushHandle(accountId: string): void {
   botWsPushHandles.delete(accountId);
 }
@@ -68,6 +174,16 @@ export function unregisterBotWsPushHandle(accountId: string): void {
 export function unregisterAccountRuntime(accountId: string): void {
   runtimes.delete(accountId);
   botWsPushHandles.delete(accountId);
+  for (const key of activeBotWsReplyHandlesBySession.keys()) {
+    if (key.startsWith(`${accountId}::`)) {
+      activeBotWsReplyHandlesBySession.delete(key);
+    }
+  }
+  for (const key of activeBotWsReplyHandlesByPeer.keys()) {
+    if (key.startsWith(`${accountId}::`)) {
+      activeBotWsReplyHandlesByPeer.delete(key);
+    }
+  }
   clearWecomSourceAccount(accountId);
   console.log(`[wecom-runtime] unregister account=${accountId}`);
 }

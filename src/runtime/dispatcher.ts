@@ -7,6 +7,7 @@ import type { WecomAuditLog } from "../observability/audit-log.js";
 import { buildRawEnvelopeSummary } from "../observability/raw-envelope-log.js";
 import type { ReplyHandle, UnifiedInboundEvent } from "../types/index.js";
 import type { WecomMediaService } from "../shared/media-service.js";
+import { registerActiveBotWsReplyHandle, unregisterActiveBotWsReplyHandle } from "../runtime.js";
 
 export async function dispatchInboundEvent(params: {
   core: PluginRuntime;
@@ -43,10 +44,28 @@ export async function dispatchInboundEvent(params: {
     event,
     mediaService,
   });
-  await dispatchRuntimeReply({
-    core,
-    cfg,
-    session,
-    replyHandle,
+  const sessionKey = session.ctx.SessionKey ?? session.route.sessionKey;
+  registerActiveBotWsReplyHandle({
+    accountId: event.accountId,
+    sessionKey,
+    peerKind: event.conversation.peerKind,
+    peerId: event.conversation.peerId,
+    handle: replyHandle,
   });
+  try {
+    await dispatchRuntimeReply({
+      core,
+      cfg,
+      session,
+      replyHandle,
+    });
+  } finally {
+    unregisterActiveBotWsReplyHandle({
+      accountId: event.accountId,
+      sessionKey,
+      peerKind: event.conversation.peerKind,
+      peerId: event.conversation.peerId,
+      handle: replyHandle,
+    });
+  }
 }

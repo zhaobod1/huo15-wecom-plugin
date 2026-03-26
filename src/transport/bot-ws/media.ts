@@ -1,5 +1,5 @@
 import type { WeComMediaType, WsFrameHeaders, WSClient } from "@wecom/aibot-node-sdk";
-import { detectMime, loadOutboundMediaFromUrl } from "openclaw/plugin-sdk";
+import { detectMime, loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/media-runtime";
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 10 * 1024 * 1024;

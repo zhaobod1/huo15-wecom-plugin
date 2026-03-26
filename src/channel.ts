@@ -6,7 +6,7 @@ import type {
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 
 import {
   DEFAULT_ACCOUNT_ID,

@@ -8,7 +8,13 @@ import {
   resolveWecomAccountConflict,
   resolveWecomAccounts,
 } from "./config/index.js";
-import { getAccountRuntime, getBotWsPushHandle, getWecomRuntime } from "./runtime.js";
+import {
+  getAccountRuntime,
+  getActiveBotWsReplyHandle,
+  getBotWsPushHandle,
+  getWecomRuntime,
+} from "./runtime.js";
+import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
 import { resolveScopedWecomTarget } from "./target.js";
 
 function resolveOutboundAccountOrThrow(params: {
@@ -87,25 +93,77 @@ function resolveBotWsChatTarget(params: {
   return undefined;
 }
 
+function resolveOutboundPeer(params: {
+  to: string | undefined;
+  accountId: string;
+}): { peerKind: "direct" | "group"; peerId: string } | undefined {
+  const scoped = resolveScopedWecomTarget(params.to, params.accountId);
+  if (!scoped) {
+    return undefined;
+  }
+  if (scoped.accountId && scoped.accountId !== params.accountId) {
+    return undefined;
+  }
+  if (scoped.target.chatid) {
+    return { peerKind: "group", peerId: scoped.target.chatid };
+  }
+  if (scoped.target.touser) {
+    return { peerKind: "direct", peerId: scoped.target.touser };
+  }
+  return undefined;
+}
+
 function shouldPreferBotWsOutbound(params: {
   cfg: ChannelOutboundContext["cfg"];
   accountId?: string | null;
   to: string | undefined;
+  sessionKey?: string | null;
 }): { preferred: boolean; accountId: string } {
   const account = resolveOutboundAccountOrThrow({
     cfg: params.cfg,
     accountId: params.accountId,
   });
+  const peer = resolveOutboundPeer({
+    to: params.to,
+    accountId: account.accountId,
+  });
+  const source = resolveWecomSourceSnapshot({
+    accountId: account.accountId,
+    sessionKey: params.sessionKey,
+    peerKind: peer?.peerKind,
+    peerId: peer?.peerId,
+  });
+  const pinnedToAgent = source?.source === "agent-callback";
+  const pinnedToBotWs = source?.source === "bot-ws";
   return {
     preferred:
       !isExplicitAgentTarget(params.to) &&
+      !pinnedToAgent &&
       Boolean(
         account.bot?.configured &&
-        account.bot.primaryTransport === "ws" &&
-        account.bot.wsConfigured,
+        account.bot.wsConfigured &&
+        (pinnedToBotWs || account.bot.primaryTransport === "ws"),
       ),
     accountId: account.accountId,
   };
+}
+
+function markActiveBotWsReplyHandleActivity(params: {
+  accountId: string;
+  sessionKey?: string | null;
+  to: string | undefined;
+}): void {
+  const peer = resolveOutboundPeer({
+    to: params.to,
+    accountId: params.accountId,
+  });
+  const handle = getActiveBotWsReplyHandle({
+    accountId: params.accountId,
+    sessionKey: params.sessionKey,
+    peerKind: peer?.peerKind,
+    peerId: peer?.peerId,
+  });
+  handle?.markExternalActivity?.();
 }
 
 async function sendTextViaBotWs(params: {
@@ -113,6 +171,7 @@ async function sendTextViaBotWs(params: {
   accountId?: string | null;
   to: string | undefined;
   text: string;
+  sessionKey?: string | null;
 }): Promise<boolean> {
   const { preferred, accountId } = shouldPreferBotWsOutbound(params);
   if (!preferred) {
@@ -141,6 +200,11 @@ async function sendTextViaBotWs(params: {
     `[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${markdownText.length})`,
   );
   await handle.sendMarkdown(chatId, markdownText);
+  markActiveBotWsReplyHandleActivity({
+    accountId,
+    sessionKey: params.sessionKey,
+    to: params.to,
+  });
   console.log(`[wecom-outbound] Successfully sent Bot WS active message to ${chatId}`);
   return true;
 }
@@ -152,6 +216,7 @@ async function sendMediaViaBotWs(params: {
   mediaUrl: string;
   text?: string;
   mediaLocalRoots?: readonly string[];
+  sessionKey?: string | null;
 }): Promise<{
   attempted: boolean;
   sent: boolean;
@@ -194,6 +259,11 @@ async function sendMediaViaBotWs(params: {
     maxBytes: resolveWecomMediaMaxBytes(params.cfg, accountId),
   });
   if (result.ok) {
+    markActiveBotWsReplyHandleActivity({
+      accountId,
+      sessionKey: params.sessionKey,
+      to: params.to,
+    });
     console.log(`[wecom-outbound] Successfully sent Bot WS media to ${chatId}`);
     return { attempted: true, sent: true };
   }
@@ -213,7 +283,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       return [text];
     }
   },
-  sendText: async ({ cfg, to, text, accountId }: ChannelOutboundContext) => {
+  sendText: async ({ cfg, to, text, accountId, sessionKey }: ChannelOutboundContext) => {
     // signal removed - not supported in current SDK
     // Defer Agent resolution until the Agent fallback path
     // sendTextViaBotWs() can already deliver without Agent mode
@@ -254,6 +324,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         accountId,
         to,
         text: outgoingText,
+        sessionKey,
       });
       if (!sentViaBotWs) {
         // Defer Agent resolution until needed for fallback
@@ -290,6 +361,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     mediaUrl,
     accountId,
     mediaLocalRoots,
+    sessionKey,
   }: ChannelOutboundContext) => {
     // signal removed - not supported in current SDK
     if (!mediaUrl) {
@@ -303,6 +375,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       text,
       mediaUrl,
       mediaLocalRoots,
+      sessionKey,
     });
     if (botWs.sent) {
       return {

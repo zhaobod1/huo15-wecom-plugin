@@ -20,12 +20,20 @@ export async function prepareInboundSession(params: {
 }): Promise<PreparedSession> {
   const { core, cfg, event, mediaService } = params;
   const route = resolveRuntimeRoute({ core, cfg, event });
-  if (event.transport === "bot-ws") {
+  const source =
+    event.transport === "bot-ws"
+      ? "bot-ws"
+      : event.transport === "agent-callback"
+        ? "agent-callback"
+        : undefined;
+  if (source) {
     registerWecomSourceSnapshot({
       accountId: event.accountId,
-      source: "bot-ws",
+      source,
       messageId: event.messageId,
       sessionKey: route.sessionKey,
+      peerKind: event.conversation.peerKind,
+      peerId: event.conversation.peerId,
     });
   }
   const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
@@ -61,7 +69,14 @@ export async function prepareInboundSession(params: {
     : defaultOriginatingTo;
   const providerContext =
     event.transport === "bot-ws"
-      ? {}
+      ? {
+          // Bot WS inbound turns already have a live reply handle bound to the
+          // current req_id. Mark the current surface as WeCom so core final text
+          // stays on that handle and replaces the placeholder instead of being
+          // re-routed as a second active-push message.
+          Provider: "wecom" as const,
+          Surface: "wecom" as const,
+        }
       : {
           Provider: "wecom" as const,
         };
@@ -84,10 +99,8 @@ export async function prepareInboundSession(params: {
     ConversationLabel: `${event.conversation.peerKind}:${event.conversation.peerId}`,
     SenderName: event.senderName ?? event.conversation.senderId,
     SenderId: event.conversation.senderId,
-    // Bot WS replies need to go through origin routing so outbound can use the
-    // live WS handle and context target. Exposing Provider/Surface as "wecom"
-    // makes OpenClaw treat the current turn as already on that surface and it
-    // suppresses shouldRouteToOriginating.
+    // Keep Originating* populated so explicit route-to-origin flows and message
+    // tools can still resolve the active peer context when needed.
     ...providerContext,
     OriginatingChannel: "wecom",
     OriginatingTo: originatingTo,

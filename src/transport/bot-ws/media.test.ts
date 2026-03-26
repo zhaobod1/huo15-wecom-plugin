@@ -1,10 +1,10 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/media-runtime";
 
 import { uploadAndSendBotWsMedia } from "./media.js";
-import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk";
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk/media-runtime", () => ({
   detectMime: vi.fn(),
   loadOutboundMediaFromUrl: vi.fn(),
 }));

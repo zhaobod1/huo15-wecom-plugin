@@ -29,8 +29,23 @@ describe("wecomOutbound", () => {
 
   afterEach(async () => {
     const runtime = await import("./runtime.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
     runtime.unregisterBotWsPushHandle("default");
     runtime.unregisterBotWsPushHandle("acct-ws");
+    runtime.unregisterActiveBotWsReplyHandle({
+      accountId: "default",
+      sessionKey: "agent:ops_bot:wecom:default:dm:zhangsan",
+      peerKind: "direct",
+      peerId: "zhangsan",
+    });
+    runtime.unregisterActiveBotWsReplyHandle({
+      accountId: "acct-ws",
+      sessionKey: "agent:ops_bot:wecom:acct-ws:dm:lisi",
+      peerKind: "direct",
+      peerId: "lisi",
+    });
+    sourceRegistry.clearWecomSourceAccount("default");
+    sourceRegistry.clearWecomSourceAccount("acct-ws");
     vi.unstubAllGlobals();
   });
 
@@ -132,10 +147,10 @@ describe("wecomOutbound", () => {
 
     (api.sendText as any).mockClear();
 
-    // Test: Party ID (Numeric)
+    // Test: Numeric targets default to User ID
     await wecomOutbound.sendText({ cfg, to: "1001", text: "hi party" } as any);
     expect(api.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ toUser: undefined, toParty: "1001" }),
+      expect.objectContaining({ toUser: "1001", toParty: undefined }),
     );
 
     (api.sendText as any).mockClear();
@@ -256,6 +271,136 @@ describe("wecomOutbound", () => {
     now.mockRestore();
   });
 
+  it("keeps agent-source sessions on the Agent text path even when ws is primary", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
+    const sendMarkdown = vi.fn().mockResolvedValue(undefined);
+    runtime.registerBotWsPushHandle(
+      "acct-ws",
+      createBotWsHandle({
+        sendMarkdown,
+      }),
+    );
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "acct-ws",
+      source: "agent-callback",
+      sessionKey: "agent:ops_bot:wecom:acct-ws:dm:lisi",
+    });
+    (api.sendText as any).mockResolvedValue(undefined);
+    (api.sendText as any).mockClear();
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          defaultAccount: "acct-ws",
+          accounts: {
+            "acct-ws": {
+              enabled: true,
+              bot: {
+                primaryTransport: "ws",
+                ws: {
+                  botId: "bot-1",
+                  secret: "secret-1",
+                },
+              },
+              agent: {
+                corpId: "corp-ws",
+                corpSecret: "agent-secret",
+                agentId: 10001,
+                token: "token-ws",
+                encodingAESKey: "aes-ws",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendText({
+      cfg,
+      accountId: "acct-ws",
+      sessionKey: "agent:ops_bot:wecom:acct-ws:dm:lisi",
+      to: "user:lisi",
+      text: "hello agent",
+    } as any);
+
+    expect(sendMarkdown).not.toHaveBeenCalled();
+    expect(api.sendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toUser: "lisi",
+        text: "hello agent",
+      }),
+    );
+  });
+
+  it("keeps agent-source peer targets on the Agent text path without sessionKey", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
+    const sendMarkdown = vi.fn().mockResolvedValue(undefined);
+    runtime.registerBotWsPushHandle(
+      "acct-ws",
+      createBotWsHandle({
+        sendMarkdown,
+      }),
+    );
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "acct-ws",
+      source: "agent-callback",
+      peerKind: "direct",
+      peerId: "lisi",
+    });
+    (api.sendText as any).mockResolvedValue(undefined);
+    (api.sendText as any).mockClear();
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          defaultAccount: "acct-ws",
+          accounts: {
+            "acct-ws": {
+              enabled: true,
+              bot: {
+                primaryTransport: "ws",
+                ws: {
+                  botId: "bot-1",
+                  secret: "secret-1",
+                },
+              },
+              agent: {
+                corpId: "corp-ws",
+                corpSecret: "agent-secret",
+                agentId: 10001,
+                token: "token-ws",
+                encodingAESKey: "aes-ws",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendText({
+      cfg,
+      accountId: "acct-ws",
+      to: "user:lisi",
+      text: "hello peer",
+    } as any);
+
+    expect(sendMarkdown).not.toHaveBeenCalled();
+    expect(api.sendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toUser: "lisi",
+        text: "hello peer",
+      }),
+    );
+  });
+
   it("does not silently fall back to Agent when Bot WS active push is configured but unavailable", async () => {
     const { wecomOutbound } = await import("./outbound.js");
     const api = await import("./transport/agent-api/core.js");
@@ -345,6 +490,263 @@ describe("wecomOutbound", () => {
       text: "caption",
     });
     expect(api.sendMedia).not.toHaveBeenCalled();
+  });
+
+  it("marks the active bot-ws reply handle when same-session text is sent via active push", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sendMarkdown = vi.fn().mockResolvedValue(undefined);
+    const markExternalActivity = vi.fn();
+    runtime.registerBotWsPushHandle(
+      "acct-ws",
+      createBotWsHandle({
+        sendMarkdown,
+      }),
+    );
+    runtime.registerActiveBotWsReplyHandle({
+      accountId: "acct-ws",
+      sessionKey: "agent:ops_bot:wecom:acct-ws:dm:lisi",
+      peerKind: "direct",
+      peerId: "lisi",
+      handle: {
+        context: {
+          transport: "bot-ws",
+          accountId: "acct-ws",
+          raw: { transport: "bot-ws", envelopeType: "ws", body: {} },
+        },
+        deliver: vi.fn(),
+        markExternalActivity,
+      } as any,
+    });
+    (api.sendText as any).mockClear();
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          defaultAccount: "acct-ws",
+          accounts: {
+            "acct-ws": {
+              enabled: true,
+              bot: {
+                primaryTransport: "ws",
+                ws: {
+                  botId: "bot-1",
+                  secret: "secret-1",
+                },
+              },
+              agent: {
+                corpId: "corp-ws",
+                corpSecret: "agent-secret",
+                agentId: 10001,
+                token: "token-ws",
+                encodingAESKey: "aes-ws",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendText({
+      cfg,
+      accountId: "acct-ws",
+      sessionKey: "agent:ops_bot:wecom:acct-ws:dm:lisi",
+      to: "user:lisi",
+      text: "hello ws",
+    } as any);
+
+    expect(sendMarkdown).toHaveBeenCalledWith("lisi", "hello ws");
+    expect(markExternalActivity).toHaveBeenCalledTimes(1);
+    expect(api.sendText).not.toHaveBeenCalled();
+  });
+
+  it("keeps agent-source sessions on the Agent media path even when ws is primary", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
+    const sendMedia = vi.fn().mockResolvedValue({ ok: true, messageId: "ws-media-1" });
+    runtime.registerBotWsPushHandle(
+      "default",
+      createBotWsHandle({
+        sendMedia,
+      }),
+    );
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "default",
+      source: "agent-callback",
+      sessionKey: "agent:ops_bot:wecom:default:dm:zhangsan",
+    });
+    (api.uploadMedia as any).mockResolvedValue("media-1");
+    (api.sendMedia as any).mockResolvedValue(undefined);
+    (api.sendMedia as any).mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        headers: new Headers({ "content-type": "image/png" }),
+      }),
+    );
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          bot: {
+            primaryTransport: "ws",
+            ws: {
+              botId: "bot-1",
+              secret: "secret-1",
+            },
+          },
+          agent: {
+            corpId: "corp",
+            corpSecret: "secret",
+            agentId: 1000002,
+            token: "token",
+            encodingAESKey: "aes",
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendMedia({
+      cfg,
+      sessionKey: "agent:ops_bot:wecom:default:dm:zhangsan",
+      to: "user:zhangsan",
+      text: "caption",
+      mediaUrl: "https://example.com/media.png",
+    } as any);
+
+    expect(sendMedia).not.toHaveBeenCalled();
+    expect(api.sendMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the active bot-ws reply handle when same-session media is sent via active push", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const sendMedia = vi.fn().mockResolvedValue({ ok: true, messageId: "ws-media-1" });
+    const markExternalActivity = vi.fn();
+    runtime.registerBotWsPushHandle(
+      "default",
+      createBotWsHandle({
+        sendMedia,
+      }),
+    );
+    runtime.registerActiveBotWsReplyHandle({
+      accountId: "default",
+      sessionKey: "agent:ops_bot:wecom:default:dm:zhangsan",
+      peerKind: "direct",
+      peerId: "zhangsan",
+      handle: {
+        context: {
+          transport: "bot-ws",
+          accountId: "default",
+          raw: { transport: "bot-ws", envelopeType: "ws", body: {} },
+        },
+        deliver: vi.fn(),
+        markExternalActivity,
+      } as any,
+    });
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          bot: {
+            primaryTransport: "ws",
+            ws: {
+              botId: "bot-1",
+              secret: "secret-1",
+            },
+          },
+          agent: {
+            corpId: "corp",
+            corpSecret: "secret",
+            agentId: 1000002,
+            token: "token",
+            encodingAESKey: "aes",
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendMedia({
+      cfg,
+      sessionKey: "agent:ops_bot:wecom:default:dm:zhangsan",
+      to: "user:zhangsan",
+      text: "caption",
+      mediaUrl: "https://example.com/media.png",
+    } as any);
+
+    expect(sendMedia).toHaveBeenCalledTimes(1);
+    expect(markExternalActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps agent-source peer targets on the Agent media path without sessionKey", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const runtime = await import("./runtime.js");
+    const api = await import("./transport/agent-api/core.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
+    const sendMedia = vi.fn().mockResolvedValue({ ok: true, messageId: "ws-media-1" });
+    runtime.registerBotWsPushHandle(
+      "default",
+      createBotWsHandle({
+        sendMedia,
+      }),
+    );
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "default",
+      source: "agent-callback",
+      peerKind: "direct",
+      peerId: "zhangsan",
+    });
+    (api.uploadMedia as any).mockResolvedValue("media-1");
+    (api.sendMedia as any).mockResolvedValue(undefined);
+    (api.sendMedia as any).mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        headers: new Headers({ "content-type": "image/png" }),
+      }),
+    );
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          bot: {
+            primaryTransport: "ws",
+            ws: {
+              botId: "bot-1",
+              secret: "secret-1",
+            },
+          },
+          agent: {
+            corpId: "corp",
+            corpSecret: "secret",
+            agentId: 1000002,
+            token: "token",
+            encodingAESKey: "aes",
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendMedia({
+      cfg,
+      to: "user:zhangsan",
+      text: "caption",
+      mediaUrl: "https://example.com/media.png",
+    } as any);
+
+    expect(sendMedia).not.toHaveBeenCalled();
+    expect(api.sendMedia).toHaveBeenCalledTimes(1);
   });
 
   it("merges configured media local roots into Bot WS sends", async () => {

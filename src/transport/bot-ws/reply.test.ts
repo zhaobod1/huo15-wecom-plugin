@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 import { uploadAndSendBotWsMedia } from "./media.js";
 import { createBotWsReplyHandle } from "./reply.js";
 

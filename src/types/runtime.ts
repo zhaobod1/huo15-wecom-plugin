@@ -95,6 +95,7 @@ export type ReplyHandle = {
   context: ReplyContext;
   deliver: (payload: ReplyPayload, info: ReplyDeliveryInfo) => Promise<void>;
   fail?: (error: unknown) => Promise<void>;
+  markExternalActivity?: () => void;
 };
 
 export type TransportSessionSnapshot = {
