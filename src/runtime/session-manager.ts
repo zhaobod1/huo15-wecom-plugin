@@ -1,6 +1,8 @@
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 import type { WecomMediaService } from "../shared/media-service.js";
 import type { UnifiedInboundEvent } from "../types/index.js";
+import { getPeerContextToken } from "../context-store.js";
+import { buildWecomContextTarget } from "../target.js";
 import { resolveRuntimeRoute } from "./routing-bridge.js";
 import { registerWecomSourceSnapshot } from "./source-registry.js";
 
@@ -46,6 +48,23 @@ export async function prepareInboundSession(params: {
   const mediaPath = firstAttachment
     ? await mediaService.saveInboundAttachment(event, firstAttachment)
     : undefined;
+  const defaultOriginatingTo =
+    event.conversation.peerKind === "group"
+      ? `wecom:group:${event.conversation.peerId}`
+      : `wecom:user:${event.conversation.peerId}`;
+  const contextToken =
+    event.transport === "bot-ws"
+      ? getPeerContextToken(event.accountId, event.conversation.peerId)
+      : undefined;
+  const originatingTo = contextToken
+    ? buildWecomContextTarget(contextToken)
+    : defaultOriginatingTo;
+  const providerContext =
+    event.transport === "bot-ws"
+      ? {}
+      : {
+          Provider: "wecom" as const,
+        };
 
   const ctx = core.channel.reply.finalizeInboundContext({
     Body: body,
@@ -65,13 +84,13 @@ export async function prepareInboundSession(params: {
     ConversationLabel: `${event.conversation.peerKind}:${event.conversation.peerId}`,
     SenderName: event.senderName ?? event.conversation.senderId,
     SenderId: event.conversation.senderId,
-    Provider: "wecom",
-    Surface: "wecom",
+    // Bot WS replies need to go through origin routing so outbound can use the
+    // live WS handle and context target. Exposing Provider/Surface as "wecom"
+    // makes OpenClaw treat the current turn as already on that surface and it
+    // suppresses shouldRouteToOriginating.
+    ...providerContext,
     OriginatingChannel: "wecom",
-    OriginatingTo:
-      event.conversation.peerKind === "group"
-        ? `wecom:group:${event.conversation.peerId}`
-        : `wecom:user:${event.conversation.peerId}`,
+    OriginatingTo: originatingTo,
     MessageSid: event.messageId,
     CommandAuthorized: true,
     MediaPath: mediaPath,
