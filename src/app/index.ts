@@ -1,7 +1,7 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
 import { clearWecomSourceAccount } from "../runtime/source-registry.js";
-import { WecomAccountRuntime } from "./account-runtime.js";
 import type { ReplyHandle } from "../types/index.js";
+import { WecomAccountRuntime } from "./account-runtime.js";
 
 let runtime: PluginRuntime | null = null;
 const runtimes = new Map<string, WecomAccountRuntime>();
@@ -15,7 +15,7 @@ export type BotWsPushHandle = {
   replyCommand: (params: {
     cmd: string;
     body?: Record<string, unknown>;
-    headers?: Record<string, string>;
+    headers?: ({ req_id?: string } & Record<string, string>) | undefined;
   }) => Promise<Record<string, unknown>>;
   sendMedia: (params: {
     chatId: string;
@@ -100,7 +100,10 @@ export function registerActiveBotWsReplyHandle(params: {
     return;
   }
   if (sessionKey) {
-    activeBotWsReplyHandlesBySession.set(buildSessionHandleKey(accountId, sessionKey), params.handle);
+    activeBotWsReplyHandlesBySession.set(
+      buildSessionHandleKey(accountId, sessionKey),
+      params.handle,
+    );
   }
   if ((params.peerKind === "direct" || params.peerKind === "group") && peerId) {
     activeBotWsReplyHandlesByPeer.set(

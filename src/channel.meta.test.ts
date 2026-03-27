@@ -9,4 +9,8 @@ describe("wecomPlugin meta", () => {
     expect(wecomPlugin.meta.docsLabel).toBe("企业微信");
     expect(wecomPlugin.meta.selectionDocsPrefix).toBe("文档：");
   });
+
+  it("exposes a setupWizard for guided setup discovery", () => {
+    expect(wecomPlugin.setupWizard?.channel).toBe("wecom");
+  });
 });

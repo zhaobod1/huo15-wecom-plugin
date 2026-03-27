@@ -1,5 +1,12 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { WeComMediaType, WsFrameHeaders, WSClient } from "@wecom/aibot-node-sdk";
-import { detectMime, loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/media-runtime";
+import {
+  assertLocalMediaAllowed,
+  detectMime,
+  fetchRemoteMedia,
+} from "openclaw/plugin-sdk/media-runtime";
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 10 * 1024 * 1024;
@@ -90,6 +97,47 @@ function extractFileName(
   return `media_${Date.now()}${mimeToExtension(contentType || "application/octet-stream")}`;
 }
 
+function resolveLocalMediaPath(mediaUrl: string): string {
+  if (mediaUrl.startsWith("file://")) {
+    return fileURLToPath(mediaUrl);
+  }
+  return mediaUrl;
+}
+
+async function loadOutboundMediaFile(params: {
+  mediaUrl: string;
+  mediaLocalRoots?: readonly string[];
+  maxBytes: number;
+}): Promise<{
+  buffer: Buffer;
+  contentType?: string;
+  fileName?: string;
+}> {
+  if (/^https?:\/\//i.test(params.mediaUrl)) {
+    return await fetchRemoteMedia({
+      url: params.mediaUrl,
+      maxBytes: params.maxBytes,
+      filePathHint: params.mediaUrl,
+    });
+  }
+
+  const mediaPath = resolveLocalMediaPath(params.mediaUrl);
+  await assertLocalMediaAllowed(mediaPath, params.mediaLocalRoots);
+  const buffer = await readFile(mediaPath);
+  if (buffer.length > params.maxBytes) {
+    throw new Error(
+      `Media size ${(buffer.length / (1024 * 1024)).toFixed(2)}MB exceeds max ${(
+        params.maxBytes /
+        (1024 * 1024)
+      ).toFixed(2)}MB`,
+    );
+  }
+  return {
+    buffer,
+    fileName: path.basename(mediaPath),
+  };
+}
+
 function applyFileSizeLimits(
   fileSize: number,
   detectedType: WeComMediaType,
@@ -160,7 +208,8 @@ async function resolveMediaFile(
   mediaLocalRoots?: readonly string[],
   maxBytes?: number,
 ): Promise<ResolvedMediaFile> {
-  const result = await loadOutboundMediaFromUrl(mediaUrl, {
+  const result = await loadOutboundMediaFile({
+    mediaUrl,
     maxBytes: maxBytes ?? FILE_MAX_BYTES,
     mediaLocalRoots,
   });

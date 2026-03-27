@@ -1,20 +1,20 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
+import { fetchRemoteMedia } from "openclaw/plugin-sdk/media-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/media-runtime";
-
 import { uploadAndSendBotWsMedia } from "./media.js";
 
 vi.mock("openclaw/plugin-sdk/media-runtime", () => ({
+  assertLocalMediaAllowed: vi.fn(),
   detectMime: vi.fn(),
-  loadOutboundMediaFromUrl: vi.fn(),
+  fetchRemoteMedia: vi.fn(),
 }));
 
 describe("uploadAndSendBotWsMedia", () => {
-  const loadOutboundMediaFromUrlMock = vi.mocked(loadOutboundMediaFromUrl);
+  const fetchRemoteMediaMock = vi.mocked(fetchRemoteMedia);
 
   beforeEach(() => {
-    loadOutboundMediaFromUrlMock.mockReset();
-    loadOutboundMediaFromUrlMock.mockResolvedValue({
+    fetchRemoteMediaMock.mockReset();
+    fetchRemoteMediaMock.mockResolvedValue({
       buffer: Buffer.from("png"),
       contentType: "image/png",
       fileName: "sample.png",
@@ -34,9 +34,9 @@ describe("uploadAndSendBotWsMedia", () => {
       maxBytes: 42 * 1024 * 1024,
     });
 
-    expect(loadOutboundMediaFromUrlMock).toHaveBeenCalledWith(
-      "https://example.com/sample.png",
+    expect(fetchRemoteMediaMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        url: "https://example.com/sample.png",
         maxBytes: 42 * 1024 * 1024,
       }),
     );

@@ -1,4 +1,7 @@
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk";
+import type {
+  OpenClawPluginToolContext,
+  OpenClawPluginToolFactory,
+} from "openclaw/plugin-sdk/core";
 import { resolveWecomSourceSnapshot } from "../../runtime/source-registry.js";
 import { cleanSchemaForGemini } from "./schema.js";
 import { clearWecomMcpCategoryCache, sendJsonRpc, type McpToolInfo } from "./transport.js";
@@ -12,9 +15,10 @@ type WecomMcpParams = {
 
 const BIZ_CACHE_CLEAR_ERROR_CODES = new Set([850002]);
 
-function textResult(data: unknown) {
+function textResult<TDetails>(data: TDetails) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+    details: data,
   };
 }
 
@@ -96,7 +100,7 @@ async function handleCall(
   return result;
 }
 
-export function createWeComMcpToolFactory() {
+export function createWeComMcpToolFactory(): OpenClawPluginToolFactory {
   return (toolContext: OpenClawPluginToolContext) => {
     if (toolContext.messageChannel !== "wecom") {
       return null;

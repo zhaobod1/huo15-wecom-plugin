@@ -1,6 +1,5 @@
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
+import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk/channel-send-result";
 import { WecomAgentDeliveryService } from "./capability/agent/index.js";
-import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
 import {
   resolveWecomMergedMediaLocalRoots,
   resolveWecomMediaMaxBytes,
@@ -16,9 +15,16 @@ import {
 } from "./runtime.js";
 import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
 import { resolveScopedWecomTarget } from "./target.js";
+import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
+
+type WecomOutboundBaseContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
+type WecomOutboundContext = WecomOutboundBaseContext & {
+  sessionKey?: string | null;
+};
+type WecomOutboundConfig = WecomOutboundContext["cfg"];
 
 function resolveOutboundAccountOrThrow(params: {
-  cfg: ChannelOutboundContext["cfg"];
+  cfg: WecomOutboundConfig;
   accountId?: string | null;
 }) {
   const resolvedAccounts = resolveWecomAccounts(params.cfg);
@@ -46,7 +52,7 @@ function resolveOutboundAccountOrThrow(params: {
 }
 
 function resolveAgentConfigOrThrow(params: {
-  cfg: ChannelOutboundContext["cfg"];
+  cfg: WecomOutboundConfig;
   accountId?: string | null;
 }) {
   const account = resolveOutboundAccountOrThrow(params).agent;
@@ -114,7 +120,7 @@ function resolveOutboundPeer(params: {
 }
 
 function shouldPreferBotWsOutbound(params: {
-  cfg: ChannelOutboundContext["cfg"];
+  cfg: WecomOutboundConfig;
   accountId?: string | null;
   to: string | undefined;
   sessionKey?: string | null;
@@ -167,7 +173,7 @@ function markActiveBotWsReplyHandleActivity(params: {
 }
 
 async function sendTextViaBotWs(params: {
-  cfg: ChannelOutboundContext["cfg"];
+  cfg: WecomOutboundConfig;
   accountId?: string | null;
   to: string | undefined;
   text: string;
@@ -210,7 +216,7 @@ async function sendTextViaBotWs(params: {
 }
 
 async function sendMediaViaBotWs(params: {
-  cfg: ChannelOutboundContext["cfg"];
+  cfg: WecomOutboundConfig;
   accountId?: string | null;
   to: string | undefined;
   mediaUrl: string;
@@ -276,14 +282,14 @@ export const wecomOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunkerMode: "text",
   textChunkLimit: 20480,
-  chunker: (text, limit) => {
+  chunker: (text: string, limit: number) => {
     try {
       return getWecomRuntime().channel.text.chunkText(text, limit);
     } catch {
       return [text];
     }
   },
-  sendText: async ({ cfg, to, text, accountId, sessionKey }: ChannelOutboundContext) => {
+  sendText: async ({ cfg, to, text, accountId, sessionKey }: WecomOutboundContext) => {
     // signal removed - not supported in current SDK
     // Defer Agent resolution until the Agent fallback path
     // sendTextViaBotWs() can already deliver without Agent mode
@@ -316,7 +322,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     }
 
     let sentViaBotWs = false;
-    let agent: any = null;
+    let agent: ReturnType<typeof resolveAgentConfigOrThrow> | null = null;
 
     try {
       sentViaBotWs = await sendTextViaBotWs({
@@ -362,7 +368,7 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     accountId,
     mediaLocalRoots,
     sessionKey,
-  }: ChannelOutboundContext) => {
+  }: WecomOutboundContext) => {
     // signal removed - not supported in current SDK
     if (!mediaUrl) {
       throw new Error("WeCom outbound requires mediaUrl.");

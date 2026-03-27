@@ -1,17 +1,30 @@
 {
   "name": "@yanhaidao/wecom",
-  "version": "2.3.260",
-  "type": "module",
+  "version": "2.3.270",
   "description": "OpenClaw 企业微信（WeCom）插件，默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息与多账号接入",
+  "license": "ISC",
+  "author": "YanHaidao (VX: YanHaidao)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/YanHaidao/wecom.git"
   },
+  "type": "module",
   "publishConfig": {
     "access": "public"
   },
-  "license": "ISC",
-  "author": "YanHaidao (VX: YanHaidao)",
+  "dependencies": {
+    "@wecom/aibot-node-sdk": "^1.0.0",
+    "fast-xml-parser": "5.3.4",
+    "undici": "^7.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "openclaw": "^2026.3.23-2"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -38,18 +51,5 @@
       "localPath": "extensions/wecom",
       "defaultChoice": "npm"
     }
-  },
-  "dependencies": {
-    "@wecom/aibot-node-sdk": "^1.0.0",
-    "fast-xml-parser": "5.3.4",
-    "undici": "^7.20.0"
-  },
-  "peerDependencies": {
-    "openclaw": "^2026.3.23-2"
-  },
-  "devDependencies": {
-    "@types/node": "^25.2.0",
-    "typescript": "^5.9.3",
-    "vitest": "^2.1.8"
   }
 }

@@ -163,6 +163,11 @@
 > 项目保持高频迭代，全面对齐甚至超越企业真实业务诉求。
 > **为保持精简，以下仅展示近期 5 次重要更新，完整历史版本（含全部 `v2.2.x`）请前往 [changelog/ 目录](./changelog/) 查阅。**
 
+#### 📌 v2.3.27（2026-03-27）
+- **[重要修复] `channel add` 重新支持 WeCom guided setup** 🧭 之前有些环境下，`wecom` 虽然已经安装，却仍会在 OpenClaw 里显示成 “does not support guided setup yet”，导致无法直接通过交互式向导添加。现在插件已经对齐 OpenClaw 当前的 `setupWizard` 接口，`openclaw channels add` 会重新正常识别和进入配置流程。
+- **[重要修复] 修复 `installedCatalogById is not defined`** 🔧 部分用户在渠道添加或选择阶段会直接遇到 `ReferenceError: installedCatalogById is not defined`，表现上像是“选了渠道就报错”或“添加流程突然失效”。这一版已经修复对应的目录访问逻辑，添加流程恢复稳定。
+- **[升级兼容] 清理 OpenClaw 新版下失效的 SDK 旧入口** 📦 这次同步迁移了 `wecom` 插件里几处已经不再建议继续从 `openclaw/plugin-sdk` 根入口直接拿的旧接口，重点覆盖工具上下文、outbound 适配器和 Bot WS 媒体发送链路，升级 OpenClaw 后更不容易再出现“有的地方能跑、有的地方直接炸”的兼容问题。
+
 #### 📌 v2.3.26（2026-03-26）
 - **[重要修复] 升级 OpenClaw 后不再乱报错** 🔧 修复了新版 OpenClaw 下 `wecom` 插件容易出现的 `is not a function` 一类启动/运行错误。
 - **[回复更稳] Agent 和 Bot WS 不再乱串** ↔️ 现在是谁收到消息，就尽量由谁来回复，不再容易出现“在 Agent 里说话，结果 Bot WS 回你”的情况。
@@ -182,10 +187,6 @@
 #### 📌 v2.3.16（2026-03-16）
 - **[解析增强] 混合消息媒体正确接管** 🛠 重点修复在 `Bot WS` 通道下，用户如果发了“一张截图 + 一段文字指示”，以前容易丢掉截图或者 AI 只能看到无法查看的腾讯云临时链接。新版底层引擎将自动扫过所有的媒体节点摘取 URL 与解密 AES Key，还大模型一双慧眼。
 
-#### 📌 v2.3.15（2026-03-14）
-- **[原生资产稳定写入]** 📄 深度强化大模型创建企微相关原生存根文档/表格时的写入稳定性。执行 `init_content` 有了更强的前置图片上传清洗能力；极大程度杜绝了混发段落/文本/图片触发的企微官方 `Validator` 异常。
-- **[复杂分发目标解包]** 💬 补齐所有关于企业微信“群聊、部门、标签组”作为 `To` 目标的精确指令解析算法，保障向全公司的组织架构层级呼气 AI 报告不再报出 `81013 target invalid`。
-
 *(查看更早期关于“超时熔断代投、动态扩容矩阵”等功能的更新日志，请移步 [changelog/ 目录](./changelog/))*
 
 ---
@@ -204,7 +205,7 @@ openclaw plugins enable wecom
 
 ### 1.2 互动向导式初配 (适合个人开发者与极客)
 
-如果您不想手写繁杂的 JSON 配置文件，可以通过交互式向导快速完成最轻量的 WebSocket 长连接部署：
+如果您不想手写繁杂的 JSON 配置文件，可以通过交互式向导快速完成最轻量的 WebSocket 长连接部署。`v2.3.27` 起，`wecom` 已重新对齐 OpenClaw 当前的 guided setup 流程，`openclaw channels add` 可以直接识别并进入配置：
 
 1. 确保已启用本插件。
 2. 在终端运行添加渠道指令：
@@ -213,6 +214,10 @@ openclaw plugins enable wecom
    ```
 3. 选择下拉列表中第一顺位的：**企业微信 (WeCom)**
 4. 根据终端亮色指引，填入企微机器人对应的 `Bot ID` 及 `Secret`，机器人即可完成握手并进入可用状态。
+
+> **如果您最近刚升级 OpenClaw：**
+> - 若之前在添加渠道时看到 `wecom does not support guided setup yet`，请更新到当前版本后重试。
+> - 若之前在渠道添加阶段见过 `ReferenceError: installedCatalogById is not defined`，这一版也已一并修复。
 
 ### 1.3 生产环境顶配架构示范（Bot WS 流式交互 + Agent 私有通道兜底发送）
 

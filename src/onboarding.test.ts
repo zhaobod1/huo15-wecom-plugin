@@ -1,7 +1,13 @@
 import type { OpenClawConfig, WizardPrompter } from "openclaw/plugin-sdk";
 import type { RuntimeEnv } from "openclaw/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { wecomOnboardingAdapter } from "./onboarding.js";
+import { buildChannelSetupWizardAdapterFromSetupWizard } from "../../../src/channels/plugins/setup-wizard.js";
+import { wecomPlugin } from "./channel.js";
+
+const wecomSetupAdapter = buildChannelSetupWizardAdapterFromSetupWizard({
+  plugin: wecomPlugin,
+  wizard: wecomPlugin.setupWizard!,
+});
 
 function createPrompter(overrides: Partial<WizardPrompter>): WizardPrompter {
   return {
@@ -54,7 +60,7 @@ describe("wecom onboarding", () => {
       }) as WizardPrompter["text"],
     });
 
-    const result = await wecomOnboardingAdapter.configure({
+    const result = await wecomSetupAdapter.configure({
       cfg: {} as OpenClawConfig,
       runtime: createRuntime(),
       prompter,
@@ -76,8 +82,12 @@ describe("wecom onboarding", () => {
     const noteText = (prompter.note as ReturnType<typeof vi.fn>).mock.calls
       .map(([message]) => String(message))
       .join("\n");
-    expect(noteText).toContain("YanHaidao/wecom 是企业微信官方推荐三方插件，功能强大，适合直接落生产环境。");
-    expect(noteText).toContain("默认就是 Bot WebSocket 模式，配置简单，无需域名，普通用户也能快速接入。");
+    expect(noteText).toContain(
+      "YanHaidao/wecom 是企业微信官方推荐三方插件，功能强大，适合直接落生产环境。",
+    );
+    expect(noteText).toContain(
+      "默认就是 Bot WebSocket 模式，配置简单，无需域名，普通用户也能快速接入。",
+    );
     expect(noteText).toContain("支持主动发消息，定时任务、异常提醒、工作流通知都可直接落地。");
   });
 
@@ -131,7 +141,7 @@ describe("wecom onboarding", () => {
       },
     };
 
-    const result = await wecomOnboardingAdapter.configure({
+    const result = await wecomSetupAdapter.configure({
       cfg: initialCfg,
       runtime: createRuntime(),
       prompter,
@@ -155,7 +165,7 @@ describe("wecom onboarding", () => {
   });
 
   it("reports chinese status copy for channel selection", async () => {
-    const status = await wecomOnboardingAdapter.getStatus({
+    const status = await wecomSetupAdapter.getStatus({
       cfg: {} as OpenClawConfig,
       options: {},
       accountOverrides: {},
@@ -199,7 +209,7 @@ describe("wecom onboarding", () => {
       }) as WizardPrompter["text"],
     });
 
-    const result = await wecomOnboardingAdapter.configure({
+    const result = await wecomSetupAdapter.configure({
       cfg: {} as OpenClawConfig,
       runtime: createRuntime(),
       prompter,
@@ -214,25 +224,33 @@ describe("wecom onboarding", () => {
       .map(([message]) => String(message))
       .join("\n");
     expect(noteText).toContain("接入标识已规范化为：haidao");
-    expect(wecomOnboardingAdapter.dmPolicy).toBeUndefined();
+    expect(wecomSetupAdapter.dmPolicy).toBeUndefined();
   });
 
   it("offers default account selection when config has no accounts", async () => {
     const prompter = createPrompter({
-      select: vi.fn(async ({ message, options }: { message: string; options: Array<{ value: string; label: string }> }) => {
-        if (message === "请选择企业微信接入标识（英文）:") {
-          expect(options.map((option) => option.value)).toEqual(["default", "__new__"]);
-          expect(options[0]?.label).toBe("default（默认标识）");
-          return "default";
-        }
-        if (message === "请选择您要配置的接入模式:") {
-          return "bot";
-        }
-        if (message === "请选择私聊 (DM) 访问策略:") {
-          return "pairing";
-        }
-        throw new Error(`Unexpected select prompt: ${message}`);
-      }) as WizardPrompter["select"],
+      select: vi.fn(
+        async ({
+          message,
+          options,
+        }: {
+          message: string;
+          options: Array<{ value: string; label: string }>;
+        }) => {
+          if (message === "请选择企业微信接入标识（英文）:") {
+            expect(options.map((option) => option.value)).toEqual(["default", "__new__"]);
+            expect(options[0]?.label).toBe("default（默认标识）");
+            return "default";
+          }
+          if (message === "请选择您要配置的接入模式:") {
+            return "bot";
+          }
+          if (message === "请选择私聊 (DM) 访问策略:") {
+            return "pairing";
+          }
+          throw new Error(`Unexpected select prompt: ${message}`);
+        },
+      ) as WizardPrompter["select"],
       text: vi.fn(async ({ message }: { message: string }) => {
         if (message === "请输入 BotId（机器人 ID）:") {
           return "bot-id-default";
@@ -250,7 +268,7 @@ describe("wecom onboarding", () => {
       }) as WizardPrompter["text"],
     });
 
-    const result = await wecomOnboardingAdapter.configure({
+    const result = await wecomSetupAdapter.configure({
       cfg: {} as OpenClawConfig,
       runtime: createRuntime(),
       prompter,
@@ -301,7 +319,7 @@ describe("wecom onboarding", () => {
       }) as WizardPrompter["text"],
     });
 
-    const result = await wecomOnboardingAdapter.configure({
+    const result = await wecomSetupAdapter.configure({
       cfg: {} as OpenClawConfig,
       runtime: createRuntime(),
       prompter,

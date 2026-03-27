@@ -51,11 +51,11 @@ export class BotWsSdkAdapter {
     registerBotWsPushHandle(this.runtime.account.accountId, {
       isConnected: () => client.isConnected,
       replyCommand: async ({ cmd, body, headers }) => {
-        const result = await client.reply(
-          { headers: headers ?? { req_id: generateReqId("wecom_ws") } },
-          body ?? {},
-          cmd,
-        );
+        const replyHeaders = {
+          ...(headers ?? {}),
+          req_id: headers?.req_id ?? generateReqId("wecom_ws"),
+        };
+        const result = await client.reply({ headers: replyHeaders }, body ?? {}, cmd);
         this.runtime.touchTransportSession("bot-ws", {
           ownerId: this.ownerId,
           running: true,
@@ -64,7 +64,7 @@ export class BotWsSdkAdapter {
           lastOutboundAt: Date.now(),
           lastError: undefined,
         });
-        return result as Record<string, unknown>;
+        return result as unknown as Record<string, unknown>;
       },
       sendMarkdown: async (chatId, content) => {
         await client.sendMessage(chatId, {
