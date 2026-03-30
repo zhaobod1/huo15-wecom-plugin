@@ -1,5 +1,5 @@
 {
-  "name": "@yanhaidao/wecom",
+  "name": "@huo15/wecom",
   "version": "2.3.271",
   "description": "OpenClaw 企业微信（WeCom）插件，默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息与多账号接入",
   "license": "ISC",
