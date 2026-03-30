@@ -1,9 +1,9 @@
 /**
  * 将较完整的 Markdown 降级转换为更适合企业微信 markdown_v2 的子集。
  *
- * 保守策略：
- * - 保留：标题、粗体、斜体、引用、链接、行内代码、普通列表、表格
- * - 降级：代码块、图片、任务列表、分隔线、HTML、脚注、复杂语法
+ * 策略：
+ * - 保留：标题、粗体、斜体、引用、链接、行内代码、普通列表、表格、代码块
+ * - 降级：图片、任务列表、分隔线、HTML、脚注、复杂语法
  * - 清理：多余空行、非法控制字符、过深嵌套
  */
 export function toWeComMarkdownV2(markdown: unknown, maxLength = 4096): string {
@@ -58,13 +58,12 @@ function restoreInlineCodeSpans(text: string, store: string[]): string {
 }
 
 function convertFencedCodeBlocks(text: string): string {
-  return text.replace(/```([a-zA-Z0-9_+\-]*)\n([\s\S]*?)```/g, (_, lang: string, code: string) => {
+  return text.replace(/```([a-zA-Z0-9_+\-]*)\n?([\s\S]*?)```/g, (_, lang: string, code: string) => {
     const safeLang = (lang || "").trim();
     const safeCode = String(code || "").replace(/^\n+|\n+$/g, "");
     if (!safeCode.trim()) return "";
-
-    const title = safeLang ? `代码（${safeLang}）：` : "代码：";
-    return `\n${title}\n${safeCode}\n`;
+    // 保留 markdown 代码块格式，企业微信 markdown_v2 支持
+    return `\n\`\`\`${safeLang}\n${safeCode}\n\`\`\`\n`;
   });
 }
 
@@ -255,7 +254,7 @@ function normalizeTables(text: string): string {
         out.push("");
       }
 
-      out.push(...tableToPlainText(tableBlock));
+      out.push(...normalizeTableBlock(tableBlock));
 
       if (j < stitched.length && stitched[j]?.trim() !== "") {
         out.push("");
@@ -273,33 +272,44 @@ function normalizeTables(text: string): string {
 
 function looksLikeTableRow(line: string): boolean {
   const stripped = String(line).trim();
+  // Must start with | — this rules out continuation fragments and avoids
+  // false positives on lines that merely contain a pipe character.
   if (!stripped.startsWith("|")) return false;
   return (stripped.match(/\|/g) || []).length >= 2;
 }
 
 function isTableSeparatorRow(row: string): boolean {
+  // A separator row only contains |, -, :, and spaces.
   const inner = row.replace(/^\|/, "").replace(/\|$/, "");
   return inner.split("|").every(c => /^[\s\-:]+$/.test(c) && c.includes("-"));
 }
 
-function extractTableCells(line: string): string[] {
-  const raw = line.trim();
+function normalizeOneTableRow(line: string): string {
+  const raw = String(line).trim();
+  if (!raw) return raw;
+
+  // Split by | then strip leading/trailing empty tokens from surrounding |
   const parts = raw.split("|");
   const inner = raw.startsWith("|") ? parts.slice(1) : parts;
   const cells = (raw.endsWith("|") ? inner.slice(0, -1) : inner).map(p => p.trim());
-  return cells.filter(c => c.length > 0);
+
+  // Always emit in canonical form: | cell | cell | ...
+  return "| " + cells.join(" | ") + " |";
 }
 
-function tableToPlainText(lines: string[]): string[] {
-  const result: string[] = [];
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    if (isTableSeparatorRow(line.trim())) continue;
-    const cells = extractTableCells(line);
-    if (cells.length === 0) continue;
-    result.push(cells.join(" | "));
+function normalizeTableBlock(lines: string[]): string[] {
+  const rows = lines.map(normalizeOneTableRow).filter(r => r.length > 0);
+  if (rows.length === 0) return [];
+
+  // If there is no separator row as the second row, inject a plain one.
+  // markdown_v2 requires a separator row; without it the table won't render.
+  if (rows.length < 2 || !isTableSeparatorRow(rows[1]!)) {
+    const colCount = Math.max(1, (rows[0]!.match(/\|/g) ?? []).length - 1);
+    const sep = "| " + Array(colCount).fill("---").join(" | ") + " |";
+    return [rows[0]!, sep, ...rows.slice(1)];
   }
-  return result;
+
+  return rows;
 }
 
 function cleanupWhitespace(text: string): string {
