@@ -1,6 +1,6 @@
 import type { ResolvedAgentAccount } from "../../types/index.js";
 import { resolveScopedWecomTarget } from "../../target.js";
-import { deliverAgentApiMedia, deliverAgentApiText } from "../../transport/agent-api/delivery.js";
+import { deliverAgentApiMedia, deliverAgentApiMarkdown, deliverAgentApiText, deliverAgentApiTextcard } from "../../transport/agent-api/delivery.js";
 import { canUseAgentApiDelivery } from "./fallback-policy.js";
 import { getWecomRuntime } from "../../runtime.js";
 
@@ -63,6 +63,19 @@ export class WecomAgentDeliveryService {
     }
   }
 
+  async sendMarkdown(params: { to: string | undefined; text: string }): Promise<void> {
+    this.assertAvailable();
+    const target = this.resolveTargetOrThrow(params.to);
+    console.log(
+      `[wecom-agent-delivery] sendMarkdown account=${this.agent.accountId} to=${String(params.to ?? "")} len=${params.text.length}`,
+    );
+    await deliverAgentApiMarkdown({
+      agent: this.agent,
+      target,
+      text: params.text,
+    });
+  }
+
   async sendMedia(params: {
     to: string | undefined;
     text?: string;
@@ -82,6 +95,28 @@ export class WecomAgentDeliveryService {
       filename: params.filename,
       contentType: params.contentType,
       text: params.text,
+    });
+  }
+
+  async sendTextcard(params: {
+    to: string | undefined;
+    title: string;
+    description: string;
+    url?: string;
+    btntxt?: string;
+  }): Promise<void> {
+    this.assertAvailable();
+    const target = this.resolveTargetOrThrow(params.to);
+    console.log(
+      `[wecom-agent-delivery] sendTextcard account=${this.agent.accountId} to=${String(params.to ?? "")} title=${params.title} descLen=${params.description.length}`,
+    );
+    await deliverAgentApiTextcard({
+      agent: this.agent,
+      target,
+      title: params.title,
+      description: params.description,
+      url: params.url,
+      btntxt: params.btntxt,
     });
   }
 }

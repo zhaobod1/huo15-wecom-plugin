@@ -197,6 +197,160 @@ export async function sendText(params: {
   }
 }
 
+export async function sendMarkdown(params: {
+  agent: ResolvedAgentAccount;
+  toUser?: string;
+  toParty?: string;
+  toTag?: string;
+  chatId?: string;
+  text: string;
+}): Promise<void> {
+  const { agent, toUser, toParty, toTag, chatId, text } = params;
+  console.log(
+    `[wecom-agent-api] sendMarkdown request account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+      `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
+      `textLen=${text.length} textPreview=${JSON.stringify(truncateForLog(text))}`,
+  );
+  const token = await getAccessToken(agent);
+
+  const useChat = Boolean(chatId);
+  const url = useChat
+    ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
+    : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+
+  const body = useChat
+    ? { chatid: chatId, msgtype: "markdown", markdown: { content: text } }
+    : {
+        touser: toUser,
+        toparty: toParty,
+        totag: toTag,
+        msgtype: "markdown",
+        agentid: requireAgentId(agent),
+        markdown: { content: text },
+      };
+
+  const res = await wecomFetch(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS },
+  );
+  const json = (await res.json()) as {
+    errcode?: number;
+    errmsg?: string;
+    invaliduser?: string;
+    invalidparty?: string;
+    invalidtag?: string;
+  };
+
+  console.log(
+    `[wecom-agent-api] sendMarkdown response account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+      `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
+      `errcode=${String(json?.errcode ?? "N/A")} errmsg=${json?.errmsg ?? ""} ` +
+      `invaliduser=${json?.invaliduser ?? ""} invalidparty=${json?.invalidparty ?? ""} invalidtag=${json?.invalidtag ?? ""}`,
+  );
+
+  if (json?.errcode !== 0) {
+    throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
+  }
+
+  if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
+    const details = [
+      json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
+      json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
+      json.invalidtag ? `invalidtag=${json.invalidtag}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(`send partial failure: ${details}`);
+  }
+}
+
+export async function sendTextcard(params: {
+  agent: ResolvedAgentAccount;
+  toUser?: string;
+  toParty?: string;
+  toTag?: string;
+  chatId?: string;
+  title: string;
+  description: string;
+  url?: string;
+  btntxt?: string;
+}): Promise<void> {
+  const { agent, toUser, toParty, toTag, chatId, title, description, url, btntxt } = params;
+  console.log(
+    `[wecom-agent-api] sendTextcard request account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+      `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
+      `title=${JSON.stringify(truncateForLog(title))} descLen=${description.length} url=${url ?? ""} btntxt=${btntxt ?? ""}`,
+  );
+  const token = await getAccessToken(agent);
+
+  const useChat = Boolean(chatId);
+  const sendUrl = useChat
+    ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
+    : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+
+  const textcardBody = {
+    title,
+    description,
+    url: url ?? "",
+    btntxt: btntxt ?? "",
+  };
+
+  const body = useChat
+    ? { chatid: chatId, msgtype: "textcard", textcard: textcardBody }
+    : {
+        touser: toUser,
+        toparty: toParty,
+        totag: toTag,
+        msgtype: "textcard",
+        agentid: requireAgentId(agent),
+        textcard: textcardBody,
+      };
+
+  const res = await wecomFetch(
+    sendUrl,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS },
+  );
+  const json = (await res.json()) as {
+    errcode?: number;
+    errmsg?: string;
+    invaliduser?: string;
+    invalidparty?: string;
+    invalidtag?: string;
+  };
+
+  console.log(
+    `[wecom-agent-api] sendTextcard response account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+      `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
+      `errcode=${String(json?.errcode ?? "N/A")} errmsg=${json?.errmsg ?? ""} ` +
+      `invaliduser=${json?.invaliduser ?? ""} invalidparty=${json?.invalidparty ?? ""} invalidtag=${json?.invalidtag ?? ""}`,
+  );
+
+  if (json?.errcode !== 0) {
+    throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
+  }
+
+  if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
+    const details = [
+      json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
+      json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
+      json.invalidtag ? `invalidtag=${json.invalidtag}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(`send partial failure: ${details}`);
+  }
+}
+
 export async function uploadMedia(params: {
   agent: ResolvedAgentAccount;
   type: "image" | "voice" | "video" | "file";
