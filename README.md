@@ -1,7 +1,7 @@
 # OpenClaw 企业微信(WeCom)Channel 插件
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Original%20Project-YanHaidao-orange?style=for-the-badge&logo=github" alt="Original Project" />
+  <a href="https://github.com/yanhaitao/wecom"><img src="https://img.shields.io/badge/Original%20Project-逸寻智库-orange?style=for-the-badge&logo=github" alt="Original Project" /></a>
   <img src="https://img.shields.io/badge/License-ISC-blue?style=for-the-badge" alt="License" />
 </p>
 
@@ -469,9 +469,11 @@ openclaw channels logs --channel wecom --lines 200
 
 ---
 
-## 四、🤝 项目协作者
+## 四、🤝 项目鸣谢
 
 感谢所有为本项目提交代码、测试、文档与反馈的协作者。
+
+- **原始项目**:[yanhaitao/wecom](https://github.com/yanhaitao/wecom)
 
 <p align="center">
   <a href="https://github.com/YanHaidao/wecom/graphs/contributors">
@@ -483,18 +485,24 @@ openclaw channels logs --channel wecom --lines 200
 
 ---
 
-## 五、📮 联系作者 与 许可证协议指引
+## 五、📮 版权与许可证协议指引
 
-<p>
-  如果您在搭建这套极度庞大的多端复合体系时遇到迷思,或者对底层代理流量重定向有着深度企业定制化需求,请毫无顾虑地与我连接:
-</p>
+<div align="center">
 
-- 微信直接交流群(扫描底部二维码进群探讨技术):
-- **维护者**:YanHaidao
+**公司名称：** 青岛火一五信息科技有限公司
 
-![企业微信交流群](https://openclaw.cc/wechat-github.jpg)
+**联系邮箱：** postmaster@huo15.com | **QQ群：** 1093992108
+
+---
+
+**关注逸寻智库公众号，获取更多资讯**
+
+<img src="https://tools.huo15.com/uploads/images/system/qrcode_yxzk.jpg" alt="逸寻智库公众号二维码" style="width: 200px; height: auto; margin: 10px 0;" />
+
+</div>
 
 ### 最后的话:关于开源及署名
-本项目遵循 **ISC License**,您可以将其用于极其广阔的项目天地中。但开源不是拿来主义:
+本项目版权归 **青岛火一五信息科技有限公司** 所有,遵循 **ISC License**。
+您可以将其用于极其广阔的项目天地中。但开源不是拿来主义:
 在此明确强调,包括所谓的"Bot+Agent 保活接力超时融合机制"、"千人千面多账户切面"、"自动寻的路由下沉" 这背后全是作者无数个在企业真实现网撞墙实验出的架构结晶。**拒绝一切去除原作者署名、粗暴改名换姓占为己用的魔改上架行为。**
 愿我们能在彼此尊重的前提下,共同拓展 OpenClaw 生态的无垠边界。
