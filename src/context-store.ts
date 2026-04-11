@@ -23,6 +23,7 @@ type StoredPeerContext = {
   contextToken: string;
   peerKind: PeerKind;
   lastSeen: number;
+  upstreamCorpId?: string;
 };
 
 type ResolvedPeerContext = StoredPeerContext & {
@@ -79,6 +80,28 @@ function normalizePeerKind(value: unknown): PeerKind {
   return value === "group" ? "group" : "direct";
 }
 
+function normalizeOptional(value: unknown): string | undefined {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || undefined;
+}
+
+function findStoredPeerContext(accountId: string, peerId: string): StoredPeerContext | undefined {
+  const peerMap = peerContextStore.get(accountId);
+  if (!peerMap) return undefined;
+
+  const exact = peerMap.get(peerId);
+  if (exact) return exact;
+
+  const normalizedPeerId = peerId.trim().toLowerCase();
+  for (const [storedPeerId, info] of peerMap) {
+    if (storedPeerId.trim().toLowerCase() === normalizedPeerId) {
+      return info;
+    }
+  }
+
+  return undefined;
+}
+
 function registerPeerContext(accountId: string, peerId: string, info: StoredPeerContext): void {
   let peerMap = peerContextStore.get(accountId);
   if (!peerMap) {
@@ -107,9 +130,10 @@ function resolveStoredPeerContext(
     contextToken?: string;
     peerKind?: PeerKind;
     lastSeen?: number;
+    upstreamCorpId?: string;
   },
 ): StoredPeerContext {
-  const existing = peerContextStore.get(accountId)?.get(peerId);
+  const existing = findStoredPeerContext(accountId, peerId);
   return {
     contextToken:
       normalizeContextToken(params.contextToken) ??
@@ -117,6 +141,9 @@ function resolveStoredPeerContext(
       randomUUID(),
     peerKind: params.peerKind ?? existing?.peerKind ?? "direct",
     lastSeen: params.lastSeen ?? Date.now(),
+    ...(normalizeOptional(params.upstreamCorpId) || existing?.upstreamCorpId
+      ? { upstreamCorpId: normalizeOptional(params.upstreamCorpId) ?? existing?.upstreamCorpId }
+      : {}),
   };
 }
 
@@ -132,6 +159,7 @@ export function restorePeerContexts(accountId: string): void {
         contextToken?: string;
         peerKind?: string;
         lastSeen?: number;
+        upstreamCorpId?: string;
       }
     >;
 
@@ -146,6 +174,9 @@ export function restorePeerContexts(accountId: string): void {
           typeof info?.lastSeen === "number" && Number.isFinite(info.lastSeen)
             ? info.lastSeen
             : Date.now(),
+        ...(normalizeOptional(info?.upstreamCorpId)
+          ? { upstreamCorpId: normalizeOptional(info?.upstreamCorpId) }
+          : {}),
       };
       peerMap.set(peerId, normalized);
       peerToAccountMap.set(peerId, accountId);
@@ -157,7 +188,8 @@ export function restorePeerContexts(accountId: string): void {
       if (
         normalized.contextToken !== info?.contextToken ||
         normalized.peerKind !== info?.peerKind ||
-        normalized.lastSeen !== info?.lastSeen
+        normalized.lastSeen !== info?.lastSeen ||
+        normalized.upstreamCorpId !== normalizeOptional(info?.upstreamCorpId)
       ) {
         mutated = true;
       }
@@ -181,6 +213,7 @@ export function setPeerContext(
     contextToken?: string;
     peerKind?: PeerKind;
     lastSeen?: number;
+    upstreamCorpId?: string;
   },
 ): string {
   const resolved = resolveStoredPeerContext(accountId, peerId, options ?? {});
@@ -219,8 +252,11 @@ export function getRecentPeerForAccount(accountId: string, maxAgeMs = 30 * 60 * 
 
 /** Get context token for a peer */
 export function getPeerContextToken(accountId: string, peerId: string): string | undefined {
-  const peerMap = peerContextStore.get(accountId);
-  return peerMap?.get(peerId)?.contextToken;
+  return findStoredPeerContext(accountId, peerId)?.contextToken;
+}
+
+export function getPeerUpstreamCorpId(accountId: string, peerId: string): string | undefined {
+  return findStoredPeerContext(accountId, peerId)?.upstreamCorpId;
 }
 
 /** Resolve a peer context from a context token. */
@@ -235,10 +271,7 @@ export function getAccountIdByContextToken(contextToken: string): string | undef
 
 /** Check if we have an active session for routing */
 export function hasActiveSession(accountId: string, peerId: string, maxAgeMs = 30 * 60 * 1000): boolean {
-  const peerMap = peerContextStore.get(accountId);
-  if (!peerMap) return false;
-
-  const info = peerMap.get(peerId);
+  const info = findStoredPeerContext(accountId, peerId);
   if (!info) return false;
 
   return Date.now() - info.lastSeen < maxAgeMs;

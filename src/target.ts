@@ -26,6 +26,35 @@ export interface ScopedWecomTarget {
     rawTarget: string;
 }
 
+function parseUpstreamScopedTarget(raw: string): {
+    accountId?: string;
+    userId: string;
+} | undefined {
+    const legacyScoped = raw.match(/^wecom-agent-upstream:([^:]+):([^:]+):(.+)$/i);
+    if (legacyScoped) {
+        return {
+            accountId: legacyScoped[1]?.trim(),
+            userId: legacyScoped[3]?.trim() || "",
+        };
+    }
+
+    const queryIndex = raw.indexOf("?upstream_corp=");
+    if (queryIndex < 0 || !raw.startsWith("wecom-agent:")) {
+        return undefined;
+    }
+
+    const pathPart = raw.slice(0, queryIndex);
+    const match = pathPart.match(/^wecom-agent:([^:]+):user:(.+)$/i);
+    if (!match) {
+        return undefined;
+    }
+
+    return {
+        accountId: match[1]?.trim(),
+        userId: match[2]?.trim() || "",
+    };
+}
+
 export function buildWecomContextTarget(contextToken: string): string {
     return `wecom:context:${contextToken}`;
 }
@@ -118,6 +147,17 @@ export function resolveScopedWecomTarget(raw: string | undefined, defaultAccount
     if (!raw?.trim()) return undefined;
 
     const trimmed = raw.trim();
+
+    const upstreamScoped = parseUpstreamScopedTarget(trimmed);
+    if (upstreamScoped) {
+        const accountId = upstreamScoped.accountId || defaultAccountId;
+        return {
+            accountId,
+            target: { touser: upstreamScoped.userId },
+            rawTarget: upstreamScoped.userId,
+        };
+    }
+
     const agentScoped = trimmed.match(/^wecom-agent:([^:]+):(.+)$/i);
     if (agentScoped) {
         const accountId = agentScoped[1]?.trim() || defaultAccountId;

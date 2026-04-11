@@ -13,4 +13,14 @@ describe("wecomPlugin meta", () => {
   it("exposes a setupWizard for guided setup discovery", () => {
     expect(wecomPlugin.setupWizard?.channel).toBe("wecom");
   });
+
+  it("preserves fully qualified WeCom messaging targets during normalization", () => {
+    expect(wecomPlugin.messaging?.normalizeTarget?.("wecom:user:zhangsan")).toBe(
+      "wecom:user:zhangsan",
+    );
+    expect(wecomPlugin.messaging?.normalizeTarget?.("wecom-agent:blue:user:zhangsan")).toBe(
+      "wecom-agent:blue:user:zhangsan",
+    );
+    expect(wecomPlugin.messaging?.normalizeTarget?.("wecom:zhangsan")).toBe("zhangsan");
+  });
 });

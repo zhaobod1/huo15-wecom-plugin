@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldProcessAgentInboundMessage } from "./handler.js";
+import { shouldProcessAgentInboundMessage, shouldSuppressAgentReplyText } from "./handler.js";
 
 describe("shouldProcessAgentInboundMessage", () => {
     it("allows enter_agent/subscribe through the filter (handled earlier by static welcome)", () => {
@@ -67,5 +67,34 @@ describe("shouldProcessAgentInboundMessage", () => {
         });
         expect(normalMessage.shouldProcess).toBe(true);
         expect(normalMessage.reason).toBe("user_message");
+    });
+});
+
+describe("shouldSuppressAgentReplyText", () => {
+    it("keeps plain text replies when no media reply has been seen", () => {
+        expect(
+            shouldSuppressAgentReplyText({
+                text: "这里是正常文本",
+                mediaReplySeen: false,
+            }),
+        ).toBe(false);
+    });
+
+    it("suppresses companion text once the reply flow includes media", () => {
+        expect(
+            shouldSuppressAgentReplyText({
+                text: "文件已发送，请查收",
+                mediaReplySeen: true,
+            }),
+        ).toBe(true);
+    });
+
+    it("does not suppress empty text even after media replies", () => {
+        expect(
+            shouldSuppressAgentReplyText({
+                text: "   ",
+                mediaReplySeen: true,
+            }),
+        ).toBe(false);
     });
 });

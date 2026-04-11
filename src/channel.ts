@@ -43,7 +43,10 @@ function resolveAccountInboundPath(account: ResolvedWecomAccount): string | unde
 function normalizeWecomMessagingTarget(raw: string): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (/^wecom-agent:/i.test(trimmed)) {
+  if (/^wecom-agent(?:-upstream)?:/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^(wecom|wechatwork|wework|qywx):(user|group|chat|party|dept|tag|context):/i.test(trimmed)) {
     return trimmed;
   }
   return trimmed.replace(/^(wecom|wechatwork|wework|qywx):/i, "").trim() || undefined;

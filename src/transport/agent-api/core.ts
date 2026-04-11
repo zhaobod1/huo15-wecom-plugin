@@ -19,7 +19,7 @@ function truncateForLog(raw: string, maxChars = 180): string {
   return `${compact.slice(0, maxChars)}...(truncated)`;
 }
 
-function normalizeUploadFilename(filename: string): string {
+export function normalizeUploadFilename(filename: string): string {
   const trimmed = filename.trim();
   if (!trimmed) return "file.bin";
   const ext = trimmed.includes(".") ? `.${trimmed.split(".").pop()!.toLowerCase()}` : "";
@@ -35,7 +35,7 @@ function normalizeUploadFilename(filename: string): string {
   return `${safeBase}${safeExt || ".bin"}`;
 }
 
-function guessUploadContentType(filename: string): string {
+export function guessUploadContentType(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   const contentTypeMap: Record<string, string> = {
     jpg: "image/jpg",
@@ -83,6 +83,10 @@ function requireAgentId(agent: ResolvedAgentAccount): number {
   throw new Error(`wecom agent account=${agent.accountId} missing agentId; sending via cgi-bin/message/send requires agentId`);
 }
 
+/**
+ * 获取主企业的 access_token
+ * 使用 corpid + corpsecret
+ */
 export async function getAccessToken(agent: ResolvedAgentAccount): Promise<string> {
   const cacheKey = `${agent.corpId}:${String(agent.agentId ?? "na")}`;
   let cache = tokenCaches.get(cacheKey);
@@ -104,6 +108,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
   cache.refreshPromise = (async () => {
     try {
       const url = `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
+      
       const res = await wecomFetch(url, undefined, {
         proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network),
         timeoutMs: LIMITS.REQUEST_TIMEOUT_MS,
@@ -112,6 +117,97 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
 
       if (!json?.access_token) {
         throw new Error(`gettoken failed: ${json?.errcode} ${json?.errmsg}`);
+      }
+
+      cache!.token = json.access_token;
+      cache!.expiresAt = Date.now() + (json.expires_in ?? 7200) * 1000;
+      return cache!.token;
+    } finally {
+      cache!.refreshPromise = null;
+    }
+  })();
+
+  return cache.refreshPromise;
+}
+
+/**
+ * 获取下游企业的 access_token
+ * 
+ * 根据企业微信文档：https://developer.work.weixin.qq.com/document/path/95816
+ * 
+ * 请求方式：POST（HTTPS）
+ * 请求地址：https://qyapi.weixin.qq.com/cgi-bin/corpgroup/corp/gettoken?access_token=ACCESS_TOKEN
+ * 
+ * 请求体：
+ * {
+ *   "corpid": "下游企业corpid",
+ *   "business_type": 1,  // 1 表示上下游企业
+ *   "agentid": 下游企业应用ID
+ * }
+ * 
+ * 注意：需要使用上游企业的 access_token 作为调用凭证
+ */
+export async function getUpstreamAccessToken(params: {
+  primaryAgent: ResolvedAgentAccount;
+  upstreamCorpId: string;
+  upstreamAgentId: number;
+}): Promise<string> {
+  const { primaryAgent, upstreamCorpId, upstreamAgentId } = params;
+
+  // 缓存 key 增加 primaryCorpId 维度，避免多主企业之间碰撞
+  const cacheKey = `upstream:${primaryAgent.corpId}:${upstreamCorpId}:${upstreamAgentId}`;
+  let cache = tokenCaches.get(cacheKey);
+
+  if (!cache) {
+    cache = { token: "", expiresAt: 0, refreshPromise: null };
+    tokenCaches.set(cacheKey, cache);
+  }
+
+  const now = Date.now();
+  if (cache.token && cache.expiresAt > now + LIMITS.TOKEN_REFRESH_BUFFER_MS) {
+    return cache.token;
+  }
+
+  if (cache.refreshPromise) {
+    return cache.refreshPromise;
+  }
+
+  cache.refreshPromise = (async () => {
+    try {
+      // 1. 先获取上游企业的 access_token
+      const primaryToken = await getAccessToken(primaryAgent);
+
+      // 2. 调用 corpgroup/corp/gettoken 获取下游企业的 access_token
+      const url = `https://qyapi.weixin.qq.com/cgi-bin/corpgroup/corp/gettoken?access_token=${encodeURIComponent(primaryToken)}`;
+      
+      const requestBody = {
+        corpid: upstreamCorpId,
+        business_type: 1,  // 1 表示上下游企业
+        agentid: upstreamAgentId,
+      };
+
+      const res = await wecomFetch(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        },
+        {
+          proxyUrl: resolveWecomEgressProxyUrlFromNetwork(primaryAgent.network),
+          timeoutMs: LIMITS.REQUEST_TIMEOUT_MS,
+        },
+      );
+      
+      const json = (await res.json()) as { 
+        access_token?: string; 
+        expires_in?: number; 
+        errcode?: number; 
+        errmsg?: string 
+      };
+
+      if (!json?.access_token) {
+        throw new Error(`get upstream token failed: ${json?.errcode} ${json?.errmsg}`);
       }
 
       cache!.token = json.access_token;
@@ -135,7 +231,7 @@ export async function sendText(params: {
 }): Promise<void> {
   const { agent, toUser, toParty, toTag, chatId, text } = params;
   console.log(
-    `[wecom-agent-api] sendText request account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+    `[wecom-agent-api] sendText request account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} corpId=${agent.corpId} ` +
       `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
       `textLen=${text.length} textPreview=${JSON.stringify(truncateForLog(text))}`,
   );
@@ -175,7 +271,7 @@ export async function sendText(params: {
   };
 
   console.log(
-    `[wecom-agent-api] sendText response account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} ` +
+    `[wecom-agent-api] sendText response account=${agent.accountId} agentId=${String(agent.agentId ?? "N/A")} corpId=${agent.corpId} ` +
       `toUser=${toUser ?? ""} toParty=${toParty ?? ""} toTag=${toTag ?? ""} chatId=${chatId ?? ""} ` +
       `errcode=${String(json?.errcode ?? "N/A")} errmsg=${json?.errmsg ?? ""} ` +
       `invaliduser=${json?.invaliduser ?? ""} invalidparty=${json?.invalidparty ?? ""} invalidtag=${json?.invalidtag ?? ""}`,
@@ -209,7 +305,7 @@ export async function uploadMedia(params: {
   const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
   const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
 
-  console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes`);
+  console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes, corpId=${agent.corpId}`);
 
   const uploadOnce = async (fileContentType: string) => {
     const boundary = `----WebKitFormBoundary${crypto.randomBytes(16).toString("hex")}`;

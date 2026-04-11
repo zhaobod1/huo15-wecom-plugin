@@ -1,5 +1,7 @@
 import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk/channel-send-result";
+import type { ResolvedAgentAccount } from "./types/account.js";
 import { WecomAgentDeliveryService } from "./capability/agent/index.js";
+import { WecomUpstreamAgentDeliveryService } from "./capability/agent/upstream-delivery-service.js";
 import {
   resolveWecomMergedMediaLocalRoots,
   resolveWecomMediaMaxBytes,
@@ -13,15 +15,84 @@ import {
   getBotWsPushHandle,
   getWecomRuntime,
 } from "./runtime.js";
+import { getPeerUpstreamCorpId } from "./context-store.js";
 import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
+import { resolveOutboundMediaAsset } from "./shared/media-asset.js";
 import { resolveScopedWecomTarget } from "./target.js";
 import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
+import { parseUpstreamAgentSessionTarget, createUpstreamAgentConfig, resolveUpstreamCorpConfig } from "./upstream/index.js";
 
 type WecomOutboundBaseContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
 type WecomOutboundContext = WecomOutboundBaseContext & {
   sessionKey?: string | null;
 };
 type WecomOutboundConfig = WecomOutboundContext["cfg"];
+
+type ResolvedOutboundContext = {
+  rawTo: string;
+  explicitAgentTarget: boolean;
+  scopedAccountId?: string;
+  peerKind?: "direct" | "group";
+  peerId?: string;
+  source?: ReturnType<typeof resolveWecomSourceSnapshot>;
+  peerUpstreamCorpId?: string;
+};
+
+function resolveOutboundContext(params: {
+  to: string | undefined;
+  accountId?: string | null;
+  sessionKey?: string | null;
+}): ResolvedOutboundContext {
+  const rawTo = String(params.to ?? "").trim();
+  const fallbackAccountId = params.accountId?.trim();
+  const scoped = resolveScopedWecomTarget(params.to, fallbackAccountId);
+  const scopedAccountId = scoped?.accountId?.trim() || fallbackAccountId;
+  const peerId = scoped?.target.touser?.trim() || scoped?.target.chatid?.trim();
+  const peerKind = scoped?.target.chatid ? "group" : scoped?.target.touser ? "direct" : undefined;
+  const source = scopedAccountId
+    ? resolveWecomSourceSnapshot({
+        accountId: scopedAccountId,
+        sessionKey: params.sessionKey,
+        peerKind,
+        peerId,
+      })
+    : undefined;
+  const peerUpstreamCorpId =
+    scopedAccountId && peerKind === "direct" && peerId
+      ? getPeerUpstreamCorpId(scopedAccountId, peerId)?.trim()
+      : undefined;
+  return {
+    rawTo,
+    explicitAgentTarget: isExplicitAgentTarget(params.to),
+    scopedAccountId,
+    peerKind,
+    peerId,
+    source,
+    peerUpstreamCorpId,
+  };
+}
+
+function logOutboundDecision(params: {
+  phase: string;
+  to: string | undefined;
+  accountId?: string | null;
+  sessionKey?: string | null;
+  textLen?: number;
+  mediaUrl?: string;
+  extra?: string;
+}): void {
+  const resolved = resolveOutboundContext(params);
+  const runtimeAccountId = resolved.scopedAccountId || params.accountId?.trim();
+  const logger = runtimeAccountId ? getAccountRuntime(runtimeAccountId)?.log.info : undefined;
+  logger?.(
+    `[wecom-outbound] ${params.phase} rawTo=${resolved.rawTo || "N/A"} scopedAccount=${resolved.scopedAccountId ?? "N/A"} ` +
+      `peer=${resolved.peerKind && resolved.peerId ? `${resolved.peerKind}:${resolved.peerId}` : "N/A"} ` +
+      `explicitAgent=${String(resolved.explicitAgentTarget)} source=${resolved.source?.source ?? "none"} ` +
+      `sourceUpstreamCorpId=${resolved.source?.upstreamCorpId ?? "none"} peerUpstreamCorpId=${resolved.peerUpstreamCorpId ?? "none"} ` +
+      `sessionKey=${params.sessionKey?.trim() || "N/A"} textLen=${String(params.textLen ?? 0)} ` +
+      `mediaUrl=${params.mediaUrl ?? "N/A"}${params.extra ? ` ${params.extra}` : ""}`,
+  );
+}
 
 function resolveOutboundAccountOrThrow(params: {
   cfg: WecomOutboundConfig;
@@ -74,7 +145,121 @@ function resolveAgentConfigOrThrow(params: {
 }
 
 function isExplicitAgentTarget(raw: string | undefined): boolean {
-  return /^wecom-agent:/i.test(String(raw ?? "").trim());
+  return /^wecom-agent(?:-upstream)?:/i.test(String(raw ?? "").trim());
+}
+
+function isAgentConversationTarget(params: {
+  to: string | undefined;
+  accountId?: string | null;
+  sessionKey?: string | null;
+}): boolean {
+  if (isExplicitAgentTarget(params.to)) {
+    return true;
+  }
+
+  const fallbackAccountId = params.accountId?.trim();
+  const scoped = resolveScopedWecomTarget(params.to, fallbackAccountId);
+  const resolvedAccountId = scoped?.accountId?.trim() || fallbackAccountId;
+  if (!resolvedAccountId) {
+    return false;
+  }
+
+  const peerId = scoped?.target.touser?.trim() || scoped?.target.chatid?.trim();
+  const peerKind = scoped?.target.chatid ? "group" : scoped?.target.touser ? "direct" : undefined;
+  const source = resolveWecomSourceSnapshot({
+    accountId: resolvedAccountId,
+    sessionKey: params.sessionKey,
+    peerKind,
+    peerId,
+  });
+  return source?.source === "agent-callback";
+}
+
+/**
+ * 解析上下游目标,返回解析后的信息或 undefined
+ */
+function resolveUpstreamTarget(params: {
+  to: string | undefined;
+  cfg: WecomOutboundConfig;
+  accountId?: string | null;
+  sessionKey?: string | null;
+}): { upstreamAgent: ResolvedAgentAccount; primaryAgent: ResolvedAgentAccount; toUser: string } | undefined {
+  const parsedExplicit = parseUpstreamAgentSessionTarget(params.to ?? "");
+  const isExplicitUpstreamTarget = Boolean(parsedExplicit);
+
+  const parsed = (() => {
+    if (parsedExplicit) {
+      return parsedExplicit;
+    }
+
+    const fallbackAccountId = params.accountId?.trim();
+    const scoped = resolveScopedWecomTarget(params.to, fallbackAccountId);
+    const toUser = scoped?.target.touser?.trim();
+    const resolvedAccountId = scoped?.accountId?.trim() || fallbackAccountId;
+    if (!toUser || !resolvedAccountId) {
+      return undefined;
+    }
+
+    const source = resolveWecomSourceSnapshot({
+      accountId: resolvedAccountId,
+      sessionKey: params.sessionKey,
+      peerKind: "direct",
+      peerId: toUser,
+    });
+    const upstreamCorpId =
+      source?.upstreamCorpId?.trim() || getPeerUpstreamCorpId(resolvedAccountId, toUser)?.trim();
+    if (!upstreamCorpId) {
+      return undefined;
+    }
+
+    return {
+      accountId: resolvedAccountId,
+      upstreamCorpId,
+      userId: toUser,
+    };
+  })();
+
+  if (!parsed) {
+    return undefined;
+  }
+
+  const { accountId, upstreamCorpId, userId } = parsed;
+  const account = resolveOutboundAccountOrThrow({ cfg: params.cfg, accountId });
+
+  if (!account.agent?.apiConfigured) {
+    if (isExplicitUpstreamTarget) {
+      throw new Error(
+        `WeCom upstream outbound requires Agent mode for account=${accountId}.`,
+      );
+    }
+    return undefined;
+  }
+
+  // 查找上下游配置
+  const upstreamConfig = resolveUpstreamCorpConfig({
+    upstreamCorpId,
+    upstreamCorps: account.agent.config.upstreamCorps,
+  });
+
+  if (!upstreamConfig) {
+    if (isExplicitUpstreamTarget) {
+      throw new Error(
+        `WeCom upstream outbound: no upstream corp config found for corpId=${upstreamCorpId}. ` +
+        `Please configure channels.wecom.accounts.${accountId}.agent.upstreamCorps with corpId=${upstreamCorpId}.`,
+      );
+    }
+    return undefined;
+  }
+
+  // 创建上下游 Agent 配置
+  // 注意:使用下游企业的 corpId 和 agentId,但保持主企业的 corpSecret
+  const upstreamAgent = createUpstreamAgentConfig({
+    baseAgent: account.agent,
+    upstreamCorpId,
+    upstreamAgentId: upstreamConfig.agentId,
+  });
+
+  return { upstreamAgent, primaryAgent: account.agent, toUser: userId };
 }
 
 function resolveBotWsChatTarget(params: {
@@ -303,12 +488,25 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     // - Agent 会话目标（wecom-agent:）：允许发送，但改写成中文。
     let outgoingText = text;
     const trimmed = String(outgoingText ?? "").trim();
-    const rawTo = typeof to === "string" ? to.trim().toLowerCase() : "";
-    const isAgentSessionTarget = rawTo.startsWith("wecom-agent:");
+    logOutboundDecision({
+      phase: "sendText:start",
+      to,
+      accountId,
+      sessionKey,
+      textLen: trimmed.length,
+    });
+    const isAgentSessionTarget = isAgentConversationTarget({ to, accountId, sessionKey });
     const looksLikeNewSessionAck = /new session started/i.test(trimmed) && /model:/i.test(trimmed);
 
     if (looksLikeNewSessionAck) {
       if (!isAgentSessionTarget) {
+        logOutboundDecision({
+          phase: "sendText:suppress-new-session-ack",
+          to,
+          accountId,
+          sessionKey,
+          textLen: trimmed.length,
+        });
         // Suppress ack without agent resolution
         return { channel: "wecom", messageId: `suppressed-${Date.now()}`, timestamp: Date.now() };
       }
@@ -319,12 +517,50 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       })();
       const rewritten = modelLabel ? `✅ 已开启新会话（模型：${modelLabel}）` : "✅ 已开启新会话。";
       outgoingText = rewritten;
+      logOutboundDecision({
+        phase: "sendText:rewrite-new-session-ack",
+        to,
+        accountId,
+        sessionKey,
+        textLen: outgoingText.length,
+      });
     }
 
     let sentViaBotWs = false;
     let agent: ReturnType<typeof resolveAgentConfigOrThrow> | null = null;
+    let upstreamTarget: ReturnType<typeof resolveUpstreamTarget> | undefined;
 
     try {
+      // 首先检查是否是上下游用户
+      upstreamTarget = resolveUpstreamTarget({ to, cfg, accountId, sessionKey });
+      
+      if (upstreamTarget) {
+        logOutboundDecision({
+          phase: "sendText:path-upstream",
+          to,
+          accountId,
+          sessionKey,
+          textLen: outgoingText.length,
+          extra: `resolvedUser=${upstreamTarget.toUser} corpId=${upstreamTarget.upstreamAgent.corpId}`,
+        });
+        // 上下游用户使用专门的 DeliveryService 发送
+        getAccountRuntime(upstreamTarget.upstreamAgent.accountId)?.log.info?.(
+          `[wecom-outbound] Sending text to upstream target corpId=${upstreamTarget.upstreamAgent.corpId} (len=${outgoingText.length})`,
+        );
+        const deliveryService = new WecomUpstreamAgentDeliveryService(
+          upstreamTarget.upstreamAgent,
+          upstreamTarget.primaryAgent,
+        );
+        await deliveryService.sendText({
+          to,
+          text: outgoingText,
+        });
+        return {
+          channel: "wecom",
+          messageId: `upstream-agent-${Date.now()}`,
+          timestamp: Date.now(),
+        };
+      }
       sentViaBotWs = await sendTextViaBotWs({
         cfg,
         accountId,
@@ -335,6 +571,13 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       if (!sentViaBotWs) {
         // Defer Agent resolution until needed for fallback
         agent = resolveAgentConfigOrThrow({ cfg, accountId });
+        logOutboundDecision({
+          phase: "sendText:path-agent",
+          to,
+          accountId: agent.accountId,
+          sessionKey,
+          textLen: outgoingText.length,
+        });
         getAccountRuntime(agent.accountId)?.log.info?.(
           `[wecom-outbound] Sending text to target=${String(to ?? "")} (len=${outgoingText.length})`,
         );
@@ -343,9 +586,17 @@ export const wecomOutbound: ChannelOutboundAdapter = {
           to,
           text: outgoingText,
         });
-        console.log(`[wecom-outbound] Successfully sent Agent text to ${String(to ?? "")}`);
+      } else {
+        logOutboundDecision({
+          phase: "sendText:path-bot-ws",
+          to,
+          accountId,
+          sessionKey,
+          textLen: outgoingText.length,
+        });
       }
     } catch (err) {
+      console.error(`[wecom-outbound] FAILED to send: ${err instanceof Error ? err.message : String(err)}`);
       if (agent) {
         getAccountRuntime(agent.accountId)?.log.error?.(
           `[wecom-outbound] Failed to send text to ${String(to ?? "")}: ${err instanceof Error ? err.message : String(err)}`,
@@ -374,6 +625,54 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       throw new Error("WeCom outbound requires mediaUrl.");
     }
 
+    logOutboundDecision({
+      phase: "sendMedia:start",
+      to,
+      accountId,
+      sessionKey,
+      textLen: String(text ?? "").trim().length,
+      mediaUrl,
+    });
+
+    // 首先检查是否是上下游用户
+    const upstreamTarget = resolveUpstreamTarget({ to, cfg, accountId, sessionKey });
+    if (upstreamTarget) {
+      logOutboundDecision({
+        phase: "sendMedia:path-upstream",
+        to,
+        accountId,
+        sessionKey,
+        textLen: String(text ?? "").trim().length,
+        mediaUrl,
+        extra: `resolvedUser=${upstreamTarget.toUser} corpId=${upstreamTarget.upstreamAgent.corpId}`,
+      });
+      getAccountRuntime(upstreamTarget.upstreamAgent.accountId)?.log.info?.(
+        `[wecom-outbound] Sending media to upstream target corpId=${upstreamTarget.upstreamAgent.corpId} (filename=${mediaUrl})`,
+      );
+
+      const { buffer, contentType, filename } = await resolveOutboundMediaAsset({
+        mediaUrl,
+        network: upstreamTarget.upstreamAgent.network,
+      });
+
+      const deliveryService = new WecomUpstreamAgentDeliveryService(
+        upstreamTarget.upstreamAgent,
+        upstreamTarget.primaryAgent,
+      );
+      await deliveryService.sendMedia({
+        to,
+        text,
+        buffer,
+        filename,
+        contentType,
+      });
+      return {
+        channel: "wecom",
+        messageId: `upstream-agent-media-${Date.now()}`,
+        timestamp: Date.now(),
+      };
+    }
+
     const botWs = await sendMediaViaBotWs({
       cfg,
       accountId,
@@ -384,6 +683,14 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       sessionKey,
     });
     if (botWs.sent) {
+      logOutboundDecision({
+        phase: "sendMedia:path-bot-ws",
+        to,
+        accountId,
+        sessionKey,
+        textLen: String(text ?? "").trim().length,
+        mediaUrl,
+      });
       return {
         channel: "wecom",
         messageId: `bot-ws-media-${Date.now()}`,
@@ -397,74 +704,20 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     }
 
     const agent = resolveAgentConfigOrThrow({ cfg, accountId });
+    logOutboundDecision({
+      phase: "sendMedia:path-agent",
+      to,
+      accountId: agent.accountId,
+      sessionKey,
+      textLen: String(text ?? "").trim().length,
+      mediaUrl,
+    });
     const deliveryService = new WecomAgentDeliveryService(agent);
 
-    let buffer: Buffer;
-    let contentType: string;
-    let filename: string;
-
-    // 判断是 URL 还是本地文件路径
-    const isRemoteUrl = /^https?:\/\//i.test(mediaUrl);
-
-    if (isRemoteUrl) {
-      const res = await fetch(mediaUrl, { signal: AbortSignal.timeout(30000) });
-      if (!res.ok) {
-        throw new Error(`Failed to download media: ${res.status}`);
-      }
-      buffer = Buffer.from(await res.arrayBuffer());
-      contentType = res.headers.get("content-type") || "application/octet-stream";
-      const urlPath = new URL(mediaUrl).pathname;
-      filename = urlPath.split("/").pop() || "media";
-    } else {
-      // 本地文件路径
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-
-      buffer = await fs.readFile(mediaUrl);
-      filename = path.basename(mediaUrl);
-
-      // 根据扩展名推断 content-type
-      const ext = path.extname(mediaUrl).slice(1).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        png: "image/png",
-        gif: "image/gif",
-        webp: "image/webp",
-        bmp: "image/bmp",
-        mp3: "audio/mpeg",
-        wav: "audio/wav",
-        amr: "audio/amr",
-        mp4: "video/mp4",
-        pdf: "application/pdf",
-        doc: "application/msword",
-        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        xls: "application/vnd.ms-excel",
-        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ppt: "application/vnd.ms-powerpoint",
-        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        txt: "text/plain",
-        csv: "text/csv",
-        tsv: "text/tab-separated-values",
-        md: "text/markdown",
-        json: "application/json",
-        xml: "application/xml",
-        yaml: "application/yaml",
-        yml: "application/yaml",
-        zip: "application/zip",
-        rar: "application/vnd.rar",
-        "7z": "application/x-7z-compressed",
-        tar: "application/x-tar",
-        gz: "application/gzip",
-        tgz: "application/gzip",
-        rtf: "application/rtf",
-        odt: "application/vnd.oasis.opendocument.text",
-      };
-      contentType = mimeTypes[ext] || "application/octet-stream";
-      console.log(
-        `[wecom-outbound] Reading local file: ${mediaUrl}, ext=${ext}, contentType=${contentType}`,
-      );
-    }
+    const { buffer, contentType, filename } = await resolveOutboundMediaAsset({
+      mediaUrl,
+      network: agent.network,
+    });
 
     console.log(
       `[wecom-outbound] Sending media to ${String(to ?? "")} (filename=${filename}, contentType=${contentType})`,

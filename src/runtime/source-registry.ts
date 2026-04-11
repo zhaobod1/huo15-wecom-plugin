@@ -9,6 +9,7 @@ export type WecomSourceSnapshot = {
   sessionId?: string;
   peerKind?: "direct" | "group";
   peerId?: string;
+  upstreamCorpId?: string;
 };
 
 const MAX_MESSAGE_FACTS = 2048;
@@ -116,6 +117,7 @@ export function registerWecomSourceSnapshot(params: {
   sessionId?: string | null;
   peerKind?: "direct" | "group" | null;
   peerId?: string | null;
+  upstreamCorpId?: string | null;
 }): void {
   const accountId = normalizeOptional(params.accountId);
   if (!accountId) return;
@@ -135,6 +137,9 @@ export function registerWecomSourceSnapshot(params: {
       : {}),
     ...(normalizePeerKind(params.peerKind) ? { peerKind: normalizePeerKind(params.peerKind) } : {}),
     ...(normalizePeerId(params.peerId) ? { peerId: normalizePeerId(params.peerId) } : {}),
+    ...(normalizeOptional(params.upstreamCorpId)
+      ? { upstreamCorpId: normalizeOptional(params.upstreamCorpId) }
+      : {}),
   };
 
   if (snapshot.messageId) {

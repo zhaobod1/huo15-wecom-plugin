@@ -132,4 +132,43 @@ describe("prepareInboundSession", () => {
     expect(result.ctx.Provider).toBe("wecom");
     expect(result.ctx).not.toHaveProperty("Surface");
   });
+
+  it("registers SessionId for source lookups after context finalization", async () => {
+    getPeerContextToken.mockReturnValue(undefined);
+    const { core } = createCore();
+    core.channel.reply.finalizeInboundContext = vi.fn((ctx) => ({
+      ...ctx,
+      SessionId: "sess-agent-1",
+    }));
+
+    await prepareInboundSession({
+      core,
+      cfg: {} as any,
+      event: {
+        accountId: "default",
+        transport: "agent-callback",
+        messageId: "msg-agent-2",
+        conversation: {
+          peerKind: "direct",
+          peerId: "HiDaoMax",
+          senderId: "HiDaoMax",
+        },
+        senderName: "HiDaoMax",
+        text: "hello",
+      } as any,
+      mediaService: createMediaService(),
+    });
+
+    expect(registerWecomSourceSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        source: "agent-callback",
+        messageId: "msg-agent-2",
+        sessionKey: "agent:ops_bot:wecom:direct:hidaomax",
+        sessionId: "sess-agent-1",
+        peerKind: "direct",
+        peerId: "HiDaoMax",
+      }),
+    );
+  });
 });

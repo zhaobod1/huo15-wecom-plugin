@@ -175,6 +175,7 @@ describe("wecomOutbound", () => {
   it("suppresses /new ack for bot sessions but not agent sessions", async () => {
     const { wecomOutbound } = await import("./outbound.js");
     const api = await import("./transport/agent-api/core.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
     const now = vi.spyOn(Date, "now").mockReturnValue(456);
     (api.sendText as any).mockResolvedValue(undefined);
     (api.sendText as any).mockClear();
@@ -203,8 +204,22 @@ describe("wecomOutbound", () => {
 
     (api.sendText as any).mockClear();
 
-    // Agent 会话（wecom-agent:...）允许发送回执
-    await wecomOutbound.sendText({ cfg, to: "wecom-agent:userid123", text: ack } as any);
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "default",
+      source: "agent-callback",
+      sessionKey: "agent:ops_bot:wecom:default:dm:userid123",
+      peerKind: "direct",
+      peerId: "userid123",
+    });
+
+    // Agent 会话允许发送回执，即使 target 是普通 wecom:user:...
+    await wecomOutbound.sendText({
+      cfg,
+      accountId: "default",
+      sessionKey: "agent:ops_bot:wecom:default:dm:userid123",
+      to: "wecom:user:userid123",
+      text: ack,
+    } as any);
     expect(api.sendText).toHaveBeenCalledWith(
       expect.objectContaining({
         toUser: "userid123",
@@ -960,6 +975,200 @@ describe("wecomOutbound", () => {
 
     expect(sendMedia).not.toHaveBeenCalled();
     expect(api.sendMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes explicit upstream agent text targets to the upstream delivery path", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const api = await import("./transport/agent-api/core.js");
+    const client = await import("./transport/agent-api/client.js");
+    const upstreamSpy = vi.spyOn(client, "sendUpstreamAgentApiText").mockResolvedValue(undefined);
+    (api.sendText as any).mockClear();
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          agent: {
+            corpId: "corp-main",
+            corpSecret: "secret-main",
+            agentId: 1000002,
+            token: "token-main",
+            encodingAESKey: "aes-main",
+            upstreamCorps: {
+              partner: {
+                corpId: "corp-up",
+                agentId: 2000001,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendText({
+      cfg,
+      to: "wecom-agent-upstream:default:corp-up:zhangsan",
+      text: "hello upstream",
+    } as any);
+
+    expect(upstreamSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toUser: "zhangsan",
+        text: "hello upstream",
+        upstreamAgent: expect.objectContaining({
+          corpId: "corp-up",
+          agentId: 2000001,
+        }),
+        primaryAgent: expect.objectContaining({
+          corpId: "corp-main",
+          agentId: 1000002,
+        }),
+      }),
+    );
+    expect(api.sendText).not.toHaveBeenCalled();
+
+    upstreamSpy.mockRestore();
+  });
+
+  it("routes plain agent targets to upstream delivery when session source snapshot carries upstream corp", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const api = await import("./transport/agent-api/core.js");
+    const client = await import("./transport/agent-api/client.js");
+    const sourceRegistry = await import("./runtime/source-registry.js");
+    const upstreamSpy = vi.spyOn(client, "sendUpstreamAgentApiText").mockResolvedValue(undefined);
+    (api.sendText as any).mockClear();
+
+    sourceRegistry.registerWecomSourceSnapshot({
+      accountId: "default",
+      source: "agent-callback",
+      sessionKey: "agent:test-agent-blue:wecom:blue:direct:zhangsan",
+      peerKind: "direct",
+      peerId: "zhangsan",
+      upstreamCorpId: "corp-up",
+    });
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          agent: {
+            corpId: "corp-main",
+            corpSecret: "secret-main",
+            agentId: 1000002,
+            token: "token-main",
+            encodingAESKey: "aes-main",
+            upstreamCorps: {
+              partner: {
+                corpId: "corp-up",
+                agentId: 2000001,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendText({
+      cfg,
+      accountId: "default",
+      sessionKey: "agent:test-agent-blue:wecom:blue:direct:zhangsan",
+      to: "wecom-agent:default:user:zhangsan",
+      text: "hello upstream by snapshot",
+    } as any);
+
+    expect(upstreamSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toUser: "zhangsan",
+        text: "hello upstream by snapshot",
+        upstreamAgent: expect.objectContaining({
+          corpId: "corp-up",
+          agentId: 2000001,
+        }),
+      }),
+    );
+    expect(api.sendText).not.toHaveBeenCalled();
+
+    upstreamSpy.mockRestore();
+  });
+
+  it("routes plain agent media targets to upstream delivery when peer context carries upstream corp", async () => {
+    const { wecomOutbound } = await import("./outbound.js");
+    const api = await import("./transport/agent-api/core.js");
+    const client = await import("./transport/agent-api/client.js");
+    const upstreamUpload = await import("./transport/agent-api/upstream-media-upload.js");
+    const contextStore = await import("./context-store.js");
+    const upstreamSendSpy = vi.spyOn(client, "sendUpstreamAgentApiMedia").mockResolvedValue(undefined);
+    const upstreamUploadSpy = vi
+      .spyOn(upstreamUpload, "uploadUpstreamAgentApiMedia")
+      .mockResolvedValue("media-up-1");
+    (api.sendMedia as any).mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        headers: new Headers({ "content-type": "text/markdown" }),
+      }),
+    );
+
+    contextStore.setPeerContext("default", "zhangsan", {
+      peerKind: "direct",
+      upstreamCorpId: "corp-up",
+    });
+
+    const cfg = {
+      channels: {
+        wecom: {
+          enabled: true,
+          agent: {
+            corpId: "corp-main",
+            corpSecret: "secret-main",
+            agentId: 1000002,
+            token: "token-main",
+            encodingAESKey: "aes-main",
+            upstreamCorps: {
+              partner: {
+                corpId: "corp-up",
+                agentId: 2000001,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await wecomOutbound.sendMedia({
+      cfg,
+      accountId: "default",
+      to: "wecom-agent:default:user:zhangsan",
+      text: "caption",
+      mediaUrl: "https://example.com/file.md",
+    } as any);
+
+    expect(upstreamUploadSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        upstreamAgent: expect.objectContaining({
+          corpId: "corp-up",
+          agentId: 2000001,
+        }),
+        filename: "file.md",
+      }),
+    );
+    expect(upstreamSendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toUser: "zhangsan",
+        mediaId: "media-up-1",
+        mediaType: "file",
+        upstreamAgent: expect.objectContaining({
+          corpId: "corp-up",
+          agentId: 2000001,
+        }),
+      }),
+    );
+    expect(api.sendMedia).not.toHaveBeenCalled();
+
+    upstreamSendSpy.mockRestore();
+    upstreamUploadSpy.mockRestore();
   });
 
   it("uses account-scoped agent config in matrix mode", async () => {

@@ -12,6 +12,11 @@ export type PreparedSession = {
   storePath: string;
 };
 
+function readContextSessionId(ctx: { SessionId?: string } | Record<string, unknown>): string | undefined {
+  const sessionId = "SessionId" in ctx ? ctx.SessionId : undefined;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : undefined;
+}
+
 export async function prepareInboundSession(params: {
   core: PluginRuntime;
   cfg: OpenClawConfig;
@@ -110,6 +115,18 @@ export async function prepareInboundSession(params: {
     MediaUrl: mediaPath,
     MediaType: firstAttachment?.contentType,
   });
+
+  if (source) {
+    registerWecomSourceSnapshot({
+      accountId: event.accountId,
+      source,
+      messageId: event.messageId,
+      sessionKey: ctx.SessionKey ?? route.sessionKey,
+      sessionId: readContextSessionId(ctx),
+      peerKind: event.conversation.peerKind,
+      peerId: event.conversation.peerId,
+    });
+  }
 
   await core.channel.session.recordInboundSession({
     storePath,

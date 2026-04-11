@@ -15,6 +15,7 @@ import {
   shouldUseDynamicAgent,
   ensureDynamicAgentListed,
 } from "../dynamic-agent.js";
+import { setPeerContext } from "../context-store.js";
 import { getWecomRuntime } from "../runtime.js";
 import { registerWecomSourceSnapshot } from "../runtime/source-registry.js";
 import {
@@ -30,16 +31,27 @@ import {
   extractMsgId,
   extractFileName,
   extractAgentId,
+  extractToUser,
 } from "../shared/xml-parser.js";
-import { downloadAgentApiMedia, sendAgentApiText } from "../transport/agent-api/client.js";
+import { resolveOutboundMediaAsset } from "../shared/media-asset.js";
+import {
+  downloadAgentApiMedia,
+  downloadUpstreamAgentApiMedia,
+  sendAgentApiText,
+  sendUpstreamAgentApiText,
+} from "../transport/agent-api/client.js";
+import { deliverAgentApiMedia } from "../transport/agent-api/delivery.js";
+import { deliverUpstreamAgentApiMedia } from "../transport/agent-api/upstream-delivery.js";
 import type {
   ResolvedAgentAccount,
+  ReplyPayload,
   UnifiedInboundEvent,
   WecomInboundKind,
 } from "../types/index.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
 import type { TransportSessionPatch } from "../types/index.js";
 import type { WecomRuntimeAuditEvent } from "../types/runtime-context.js";
+import { detectUpstreamUser, createUpstreamAgentConfig, resolveUpstreamCorpConfig } from "../upstream/index.js";
 
 /** 错误提示信息 */
 const ERROR_HELP = "\n\n遇到问题？联系作者: YanHaidao (微信: YanHaidao)";
@@ -121,6 +133,11 @@ function buildTextFilePreview(buffer: Buffer, maxChars: number): string | undefi
   if (!text.trim()) return undefined;
   const truncated = text.length > maxChars ? `${text.slice(0, maxChars)}\n…(已截断)` : text;
   return truncated;
+}
+
+function readContextSessionId(ctx: { SessionId?: string } | Record<string, unknown>): string | undefined {
+  const sessionId = "SessionId" in ctx ? ctx.SessionId : undefined;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : undefined;
 }
 
 /**
@@ -244,6 +261,13 @@ export function shouldProcessAgentInboundMessage(params: {
     shouldProcess: true,
     reason: "user_message",
   };
+}
+
+export function shouldSuppressAgentReplyText(params: {
+  text: string;
+  mediaReplySeen: boolean;
+}): boolean {
+  return params.mediaReplySeen && Boolean(params.text.trim());
 }
 
 function normalizeAgentId(value: unknown): number | undefined {
@@ -448,9 +472,47 @@ async function processAgentMessage(params: {
   const replyTarget = isGroup
     ? ({ toUser: undefined, chatId: peerId } as const)
     : ({ toUser: fromUser, chatId: undefined } as const);
+  let upstreamAgent: typeof agent | undefined;
+  let upstreamReplyTarget: typeof replyTarget | undefined;
+  let primaryAgentForUpstream: typeof agent | undefined;
   const eventType = String(msg.Event ?? "")
     .trim()
     .toLowerCase();
+
+  // 检测是否是上下游用户
+  const toUserName = extractToUser(msg);
+  const isUpstreamUser = detectUpstreamUser({
+    messageToUserName: toUserName,
+    primaryCorpId: agent.corpId,
+  });
+  
+  if (isUpstreamUser) {
+    log?.(
+      `[wecom-agent] detected upstream user: from=${fromUser} toCorpId=${toUserName}`,
+    );
+
+    // 查找上下游配置，构建上游 Agent 配置
+    const upstreamConfig = resolveUpstreamCorpConfig({
+      upstreamCorpId: toUserName,
+      upstreamCorps: agent.config.upstreamCorps,
+    });
+    if (upstreamConfig) {
+      upstreamAgent = createUpstreamAgentConfig({
+        baseAgent: agent,
+        upstreamCorpId: toUserName,
+        upstreamAgentId: upstreamConfig.agentId,
+      });
+      primaryAgentForUpstream = agent;
+      // 上下游的 replyTarget 与普通 DM 一致（toUser = fromUser）
+      upstreamReplyTarget = isGroup
+        ? ({ toUser: undefined, chatId: peerId } as const)
+        : ({ toUser: fromUser, chatId: undefined } as const);
+    } else {
+      error?.(
+        `[wecom-agent] upstream user detected but no upstream config for corpId=${toUserName}; fallback to primary agent target`,
+      );
+    }
+  }
 
   const resolveInboundKind = (): WecomInboundKind => {
     if (msgType === "event") {
@@ -497,7 +559,15 @@ async function processAgentMessage(params: {
           buffer,
           contentType,
           filename: headerFileName,
-        } = await downloadAgentApiMedia({ agent, mediaId, maxBytes: mediaMaxBytes });
+        } =
+          upstreamAgent && primaryAgentForUpstream
+            ? await downloadUpstreamAgentApiMedia({
+                upstreamAgent,
+                primaryAgent: primaryAgentForUpstream,
+                mediaId,
+                maxBytes: mediaMaxBytes,
+              })
+            : await downloadAgentApiMedia({ agent, mediaId, maxBytes: mediaMaxBytes });
         const xmlFileName = extractFileName(msg);
         const originalFileName = (xmlFileName || headerFileName || `${mediaId}.bin`).trim();
         const heuristic = analyzeTextHeuristic(buffer);
@@ -633,7 +703,16 @@ async function processAgentMessage(params: {
       `[wecom-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
     );
     try {
-      await sendAgentApiText({ agent, ...replyTarget, text: prompt });
+      if (upstreamAgent) {
+        await sendUpstreamAgentApiText({
+          upstreamAgent,
+          primaryAgent: primaryAgentForUpstream!,
+          ...(upstreamReplyTarget ?? replyTarget),
+          text: prompt,
+        });
+      } else {
+        await sendAgentApiText({ agent, ...replyTarget, text: prompt });
+      }
       touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
       log?.(`[wecom-agent] routing guard prompt delivered to ${fromUser}`);
     } catch (err: unknown) {
@@ -710,7 +789,16 @@ async function processAgentMessage(params: {
       scope: "agent",
     });
     try {
-      await sendAgentApiText({ agent, ...replyTarget, text: prompt });
+      if (upstreamAgent) {
+        await sendUpstreamAgentApiText({
+          upstreamAgent,
+          primaryAgent: primaryAgentForUpstream!,
+          ...(upstreamReplyTarget ?? replyTarget),
+          text: prompt,
+        });
+      } else {
+        await sendAgentApiText({ agent, ...replyTarget, text: prompt });
+      }
       touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
       log?.(
         `[wecom-agent] unauthorized command: replied to ${isGroup ? `chat:${peerId}` : fromUser}`,
@@ -756,6 +844,27 @@ async function processAgentMessage(params: {
     MediaType: mediaType,
     MediaUrl: mediaPath,
   });
+  const sessionId = readContextSessionId(ctxPayload);
+
+  log?.(
+    `[wecom-agent] session bound: sessionKey=${ctxPayload.SessionKey ?? route.sessionKey} sessionId=${sessionId ?? "N/A"} peer=${peerId} upstream=${String(Boolean(upstreamAgent))}`,
+  );
+
+  registerWecomSourceSnapshot({
+    accountId: agent.accountId,
+    source: "agent-callback",
+    messageId: extractMsgId(msg) ?? undefined,
+    sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+    sessionId,
+    peerKind: isGroup ? "group" : "direct",
+    peerId,
+    upstreamCorpId: upstreamAgent?.corpId,
+  });
+  setPeerContext(agent.accountId, peerId, {
+    peerKind: isGroup ? "group" : "direct",
+    lastSeen: Date.now(),
+    upstreamCorpId: upstreamAgent?.corpId,
+  });
 
   // 记录会话
   await core.channel.session.recordInboundSession({
@@ -769,14 +878,25 @@ async function processAgentMessage(params: {
 
   // 5秒无响应自动回复进度提示
   let hasResponseSent = false;
+  const effectiveAgent = upstreamAgent ?? agent;
+  const effectiveReplyTarget = upstreamReplyTarget ?? replyTarget;
   const processingTimer = setTimeout(async () => {
     if (hasResponseSent) return;
     try {
-      await sendAgentApiText({
-        agent,
-        ...replyTarget,
-        text: "正在处理中，请稍候...",
-      });
+      if (upstreamAgent && primaryAgentForUpstream) {
+        await sendUpstreamAgentApiText({
+          upstreamAgent,
+          primaryAgent: primaryAgentForUpstream,
+          ...effectiveReplyTarget,
+          text: "正在处理中，请稍候...",
+        });
+      } else {
+        await sendAgentApiText({
+          agent: effectiveAgent,
+          ...effectiveReplyTarget,
+          text: "正在处理中，请稍候...",
+        });
+      }
       log?.(
         `[wecom-agent] sent processing notification to ${isGroup ? `chat:${peerId}` : fromUser}`,
       );
@@ -787,6 +907,25 @@ async function processAgentMessage(params: {
 
   // 发送队列锁：确保所有 deliver 调用（以及内部的分片发送）严格串行执行
   let messageSendQueue = Promise.resolve();
+  let deferredMediaUrls: string[] = [];
+
+  const mergeDeferredMediaUrls = (mediaUrls: string[]): string[] => {
+    if (mediaUrls.length === 0) {
+      return deferredMediaUrls;
+    }
+    const merged = [...deferredMediaUrls];
+    for (const mediaUrl of mediaUrls) {
+      if (!merged.includes(mediaUrl)) {
+        merged.push(mediaUrl);
+      }
+    }
+    deferredMediaUrls = merged;
+    return deferredMediaUrls;
+  };
+
+  const replyWecomTarget = effectiveReplyTarget.chatId
+    ? ({ chatid: effectiveReplyTarget.chatId } as const)
+    : ({ touser: effectiveReplyTarget.toUser } as const);
 
   try {
     // 调度回复
@@ -797,10 +936,20 @@ async function processAgentMessage(params: {
         disableBlockStreaming: false,
       },
       dispatcherOptions: {
-        deliver: async (payload: { text?: string }, info: { kind: string }) => {
+        deliver: async (payload: ReplyPayload, info: { kind: string }) => {
           const text = payload.text ?? "";
-          // 忽略空文本消息
-          if (!text || !text.trim()) {
+          const incomingMediaUrls = payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
+          if (info.kind !== "final" && incomingMediaUrls.length > 0) {
+            mergeDeferredMediaUrls(incomingMediaUrls);
+          }
+          const mediaUrls =
+            info.kind === "final"
+              ? mergeDeferredMediaUrls(incomingMediaUrls)
+              : incomingMediaUrls;
+
+          const outboundText = text;
+
+          if ((!outboundText || !outboundText.trim()) && mediaUrls.length === 0) {
             return;
           }
 
@@ -813,18 +962,27 @@ async function processAgentMessage(params: {
           const currentTask = async () => {
             const MAX_CHUNK_SIZE = 600;
             // 确保分片顺序发送
-            for (let i = 0; i < text.length; i += MAX_CHUNK_SIZE) {
-              const chunk = text.slice(i, i + MAX_CHUNK_SIZE);
+            for (let i = 0; i < outboundText.length; i += MAX_CHUNK_SIZE) {
+              const chunk = outboundText.slice(i, i + MAX_CHUNK_SIZE);
 
               try {
-                await sendAgentApiText({ agent, ...replyTarget, text: chunk });
+                if (upstreamAgent) {
+                  await sendUpstreamAgentApiText({
+                    upstreamAgent,
+                    primaryAgent: primaryAgentForUpstream!,
+                    ...effectiveReplyTarget,
+                    text: chunk,
+                  });
+                } else {
+                  await sendAgentApiText({ agent: effectiveAgent, ...effectiveReplyTarget, text: chunk });
+                }
                 touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
                 log?.(
-                  `[wecom-agent] reply chunk delivered (${info.kind}) to ${isGroup ? `chat:${peerId}` : fromUser}, len=${chunk.length}`,
+                  `[wecom-agent] reply chunk delivered (${info.kind}) to ${isGroup ? `chat:${peerId}` : fromUser}, len=${chunk.length}, sessionKey=${ctxPayload.SessionKey ?? route.sessionKey}, sessionId=${sessionId ?? "N/A"}`,
                 );
 
                 // 强制延时：确保企业微信有足够时间处理顺序（优化：200ms → 50ms）
-                if (i + MAX_CHUNK_SIZE < text.length) {
+                if (i + MAX_CHUNK_SIZE < outboundText.length) {
                   await new Promise((resolve) => setTimeout(resolve, 50));
                 }
               } catch (err: unknown) {
@@ -845,6 +1003,57 @@ async function processAgentMessage(params: {
                   error: message,
                 });
               }
+            }
+
+            if (info.kind === "final") {
+              for (const mediaUrl of mediaUrls) {
+                try {
+                  const media = await resolveOutboundMediaAsset({
+                    mediaUrl,
+                    network: effectiveAgent.network,
+                  });
+                  if (upstreamAgent) {
+                    await deliverUpstreamAgentApiMedia({
+                      upstreamAgent,
+                      primaryAgent: primaryAgentForUpstream!,
+                      target: replyWecomTarget,
+                      buffer: media.buffer,
+                      filename: media.filename,
+                      contentType: media.contentType,
+                    });
+                  } else {
+                    await deliverAgentApiMedia({
+                      agent: effectiveAgent,
+                      target: replyWecomTarget,
+                      buffer: media.buffer,
+                      filename: media.filename,
+                      contentType: media.contentType,
+                    });
+                  }
+                  touchTransportSession?.({ lastOutboundAt: Date.now(), running: true });
+                  log?.(
+                    `[wecom-agent] reply media delivered (${info.kind}) to ${isGroup ? `chat:${peerId}` : fromUser}, media=${media.filename}, sessionKey=${ctxPayload.SessionKey ?? route.sessionKey}, sessionId=${sessionId ?? "N/A"}`,
+                  );
+                } catch (err: unknown) {
+                  const message =
+                    err instanceof Error
+                      ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}`
+                      : String(err);
+                  error?.(`[wecom-agent] media reply failed: ${message}`);
+                  auditSink?.({
+                    transport: "agent-callback",
+                    category: "fallback-delivery-failed",
+                    summary: `agent callback media reply failed user=${fromUser} kind=${info.kind}`,
+                    raw: {
+                      transport: "agent-callback",
+                      envelopeType: "xml",
+                      body: msg,
+                    },
+                    error: message,
+                  });
+                }
+              }
+              deferredMediaUrls = [];
             }
 
             // 不同 Block 之间也增加一点间隔（优化：200ms → 50ms）

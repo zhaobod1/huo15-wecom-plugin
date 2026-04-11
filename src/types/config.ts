@@ -48,6 +48,16 @@ export type WecomBotConfig = {
   webhook?: WecomBotWebhookConfig;
 };
 
+/**
+ * 上下游企业配置
+ * 根据企业微信文档，只需要配置下游企业的 CorpID 和 AgentID
+ * 不需要下游企业的 agentSecret，使用主企业的 corpSecret 获取下游企业的 access_token
+ */
+export type WecomUpstreamCorpConfig = {
+  corpId: string;
+  agentId: number;
+};
+
 export type WecomAgentConfig = {
   corpId: string;
   agentSecret?: string;
@@ -61,6 +71,14 @@ export type WecomAgentConfig = {
   encodingAESKey: string;
   welcomeText?: string;
   dm?: WecomDmConfig;
+  /**
+   * 上下游企业配置映射
+   * key: 配置名称（可自定义）
+   * value: 下游企业的 CorpID 和 AgentID
+   * 
+   * 注意：不需要配置 agentSecret，使用主企业的 corpSecret 获取下游企业的 access_token
+   */
+  upstreamCorps?: Record<string, WecomUpstreamCorpConfig>;
 };
 
 export type WecomDynamicAgentsConfig = {
