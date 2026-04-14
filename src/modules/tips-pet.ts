@@ -1,12 +1,9 @@
 /**
- * 模块: 企微小贴士 + 火苗宠物
+ * 模块: 企微火苗宠物
  *
- * Hook: after_agent_reply (修复：使用 after_agent_reply 确保能拿到完整回复)
- * 时机: AI 回复发送后，追加贴士和宠物
- * 特性:
- * - 场景感知贴士
- * - 概率可配置
- * - 企业微信 Emoji 格式宠物
+ * Hook: after_agent_reply
+ * 时机: AI 回复发送后，追加宠物
+ * 注意：小贴士功能已禁用，待修复
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -27,45 +24,6 @@ export interface WecomPetConfig {
   name?: string;
   color?: "orange" | "blue" | "purple" | "green" | "white";
 }
-
-// ── 贴士注册表 ──
-interface Tip {
-  category: string;
-  content: string;
-  scene?: string;
-}
-
-const TIPS_REGISTRY: Tip[] = [
-  { category: "🔍 工具", content: "「帮我搜索」+ 关键词，可以查网页、找文档", scene: "search" },
-  { category: "🔧 工具", content: "说「帮我 fork xxx」可以复制项目到你的 GitHub", scene: "tools" },
-  { category: "📝 记忆", content: "叫我「忽略记忆」可以清空记忆引用", scene: "memory" },
-  { category: "📝 记忆", content: "「记住这个」+ 内容，下次自动引用", scene: "memory" },
-  { category: "🎮 趣味", content: "多说「谢谢」「辛苦了」可以喂小火苗，经验 UP UP", scene: "thanks" },
-  { category: "🔥 激励", content: "完成复杂任务后说「谢谢」可以给小火苗喂食", scene: "thanks" },
-  { category: "📂 项目", content: "「帮我看看项目进度」可以查看各项目状态", scene: "workflow" },
-  { category: "📋 任务", content: "「新建任务」+ 描述，可以创建待办任务", scene: "workflow" },
-  { category: "🎯 专注", content: "说「专注模式」可以进入深度工作状态", scene: "workflow" },
-  { category: "📚 学习", content: "试试「48小时学习法」+ 主题，快速掌握新领域", scene: "learn" },
-  { category: "📚 学习", content: "问「为什么」比问「怎么做」更能学到本质", scene: "learn" },
-  { category: "🤖 AI", content: "多轮对话比单次问答更能解决复杂问题", scene: "ai" },
-  { category: "🔐 安全", content: "危险操作会弹出确认对话框，输入「/approve」确认执行", scene: "safety" },
-  { category: "📝 文档", content: "「写Word文档」+ 主题，自动生成规范文档", scene: "document" },
-  { category: "💡 技巧", content: "清晰的问题描述可以得到更准确的答案", scene: "general" },
-  { category: "💡 技巧", content: "复杂问题分步问，比一口气问更有效", scene: "general" },
-];
-
-// ── 场景关键词 ──
-const SCENE_KEYWORDS: Record<string, string[]> = {
-  memory: ["记忆", "记得", "忘掉", "忽略记忆", "MEMORY", "记住"],
-  search: ["搜索", "查找", "找", "search", "搜"],
-  thanks: ["谢谢", "感谢", "辛苦了", "thanks", "谢"],
-  workflow: ["任务", "计划", "规划", "todo", "待办", "项目"],
-  safety: ["安全", "危险", "确认", "approve"],
-  ai: ["为什么", "怎么", "如何", "what", "how", "why"],
-  learn: ["学习", "学", "掌握", "learn", "study"],
-  tools: ["工具", "帮我", "帮我做", "fork", "clone"],
-  document: ["文档", "报告", "合同", "方案", "会议纪要", "word", "docx"],
-};
 
 // ── 宠物类型 ──
 type FlameColor = "orange" | "blue" | "purple" | "green" | "white";
@@ -150,29 +108,7 @@ function addXp(pet: FlamePet, amount: number): void {
   }
 }
 
-// ── 场景匹配贴士 ──
-function matchTip(userMessage: string): Tip {
-  const lowerMsg = userMessage.toLowerCase();
-
-  for (const [scene, keywords] of Object.entries(SCENE_KEYWORDS)) {
-    if (keywords.some(kw => lowerMsg.includes(kw.toLowerCase()))) {
-      const sceneTips = TIPS_REGISTRY.filter(t => t.scene === scene);
-      if (sceneTips.length > 0) {
-        return sceneTips[Math.floor(Math.random() * sceneTips.length)];
-      }
-    }
-  }
-
-  // 返回随机通用贴士
-  const generalTips = TIPS_REGISTRY.filter(t => !t.scene || t.scene === "general");
-  return generalTips[Math.floor(Math.random() * generalTips.length)];
-}
-
-// ── 格式化 ──
-function formatTip(tip: Tip): string {
-  return `\n---\n> **💡 ${tip.category}**\n> ${tip.content}\n`;
-}
-
+// ── 格式化宠物 ──
 function formatPet(pet: FlamePet): string {
   return `\n---\n> **${COLOR_EMOJI[pet.color]} ${pet.name}** Lv.${pet.level}\n> ${MOOD_EMOJI[pet.mood]} 活泼好动\n> 经验: ${pet.xp}/${xpForLevel(pet.level)}\n`;
 }
@@ -183,24 +119,21 @@ export function registerWecomTipsPet(
   tipsConfig?: WecomTipsConfig,
   petConfig?: WecomPetConfig
 ) {
-  const tipsEnabled = tipsConfig?.enabled !== false;
   const petEnabled = petConfig?.enabled !== false;
-  const probability = tipsConfig?.probability ?? 0.3;
-  const forceShow = tipsConfig?.forceShow ?? false;
-  const sceneAware = tipsConfig?.sceneAware ?? true;
-  const showPet = tipsConfig?.showPet ?? true;
+  const showPet = petConfig?.enabled !== false;
+
+  // 小贴士功能已禁用 - 需要修复后再启用
+  const tipsEnabled = false;
 
   if (!tipsEnabled && !petEnabled) return;
 
   // ── Hook: after_agent_reply ──
-  // 修复：使用 after_agent_reply 确保能拿到完整回复内容
   api.on("after_agent_reply" as any, (event: any, ctx: any): any => {
     const agentId = (ctx?.agentId ?? "main").trim();
     
-    // 获取回复内容 - 兼容不同格式
-    const replyText = event?.reply?.text ?? event?.text ?? "";
-    const userMessage: string = ctx?.userMessage?.trim() ?? "";
-
+    // 获取回复内容
+    const replyText = event?.reply?.text ?? "";
+    
     // 跳过空输出、NO_REPLY、HEARTBEAT_OK
     const trimmed = replyText.trim().toUpperCase();
     if (!replyText || trimmed === "" || trimmed === "NO_REPLY" || trimmed === "HEARTBEAT_OK") {
@@ -208,16 +141,8 @@ export function registerWecomTipsPet(
     }
 
     let newText = replyText;
-    let modified = false;
 
-    // 处理贴士
-    if (tipsEnabled && (forceShow || Math.random() <= probability)) {
-      const tip = sceneAware && userMessage ? matchTip(userMessage) : TIPS_REGISTRY[Math.floor(Math.random() * TIPS_REGISTRY.length)];
-      newText += formatTip(tip);
-      modified = true;
-    }
-
-    // 处理宠物
+    // 处理宠物（只追加宠物，不处理贴士）
     if (petEnabled && showPet) {
       const pet = loadPet(agentId);
       if (event?.reply?.isError) {
@@ -228,14 +153,13 @@ export function registerWecomTipsPet(
       addXp(pet, 2);
       savePet(pet);
       newText += formatPet(pet);
-      modified = true;
     }
 
-    if (!modified || newText === replyText) {
+    if (newText === replyText) {
       return {};
     }
 
-    api.logger.info(`[wecom-tips] 追加贴士/宠物到回复 (agent: ${agentId})`);
+    api.logger.info(`[wecom-pet] 追加宠物到回复 (agent: ${agentId})`);
 
     // 返回修改后的内容
     return {
@@ -299,5 +223,5 @@ export function registerWecomTipsPet(
     }) as any);
   }
 
-  api.logger.info("[wecom] 小贴士+火苗宠物模块已加载");
+  api.logger.info("[wecom] 火苗宠物模块已加载（小贴士已禁用）");
 }
