@@ -1,5 +1,5 @@
 /**
- * Author: YanHaidao
+ * Author: YanHaidao / 火一五定制版
  */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
@@ -10,6 +10,7 @@ import { wecomPlugin } from "./src/channel.js";
 import { handleWecomWebhookRequest } from "./src/monitor.js";
 import { setWecomRuntime } from "./src/runtime.js";
 import { isWecomBotWsSource } from "./src/runtime/source-registry.js";
+import { registerWecomTipsPet } from "./src/modules/tips-pet.js";
 
 const WECOM_BOT_WS_MEDIA_GUIDANCE = [
   "【WeCom Bot WS 媒体发送】",
@@ -26,11 +27,36 @@ const WECOM_BOT_WS_MEDIA_GUIDANCE = [
   "- 语音消息仅原生支持 AMR；其他音频格式会按文件发送",
 ].join("\n");
 
+// ── 插件配置 Schema ──
+const wecomPluginConfigSchema = {
+  type: "object" as const,
+  properties: {
+    tips: {
+      type: "object" as const,
+      properties: {
+        enabled: { type: "boolean" },
+        probability: { type: "number" },
+        forceShow: { type: "boolean" },
+        sceneAware: { type: "boolean" },
+        showPet: { type: "boolean" },
+      },
+    },
+    pet: {
+      type: "object" as const,
+      properties: {
+        enabled: { type: "boolean" },
+        name: { type: "string" },
+        color: { type: "string", enum: ["orange", "blue", "purple", "green", "white"] },
+      },
+    },
+  },
+};
+
 const plugin = {
   id: "wecom",
   name: "WeCom (企业微信)",
-  description: "企业微信官方推荐三方插件，默认 Bot WS，支持主动发消息与统一运行时能力",
-  configSchema: emptyPluginConfigSchema(),
+  description: "企业微信官方推荐三方插件，默认 Bot WS，支持主动发消息与统一运行时能力，火一五定制版（小贴士+火苗宠物）",
+  configSchema: wecomPluginConfigSchema,
   /**
    * **register (注册插件)**
    *
@@ -73,6 +99,24 @@ const plugin = {
         appendSystemContext: WECOM_BOT_WS_MEDIA_GUIDANCE,
       };
     });
+
+    // ── 注册小贴士+火苗宠物模块 ──
+    const config = (api.pluginConfig ?? {}) as {
+      tips?: {
+        enabled?: boolean;
+        probability?: number;
+        forceShow?: boolean;
+        sceneAware?: boolean;
+        showPet?: boolean;
+      };
+      pet?: {
+        enabled?: boolean;
+        name?: string;
+        color?: "orange" | "blue" | "purple" | "green" | "white";
+      };
+    };
+
+    registerWecomTipsPet(api, config.tips, config.pet);
   },
 };
 
