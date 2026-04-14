@@ -97,6 +97,37 @@ export function buildEffectivePool(
   return base.length > 0 ? base : DEFAULT_TIPS_POOL;
 }
 
+// ── 概率语言控制 ──
+
+export interface ProbabilityPreset {
+  name: string;
+  value: number;
+  keywords: string[];
+  reply: string;
+}
+
+export const PROBABILITY_PRESETS: ProbabilityPreset[] = [
+  { name: "off",    value: 0,    keywords: ["关闭贴士", "不要贴士", "贴士关", "关掉贴士", "隐藏贴士", "别显示贴士"], reply: "💡 贴士已关闭，说「打开贴士」可以重新开启" },
+  { name: "low",    value: 0.1,  keywords: ["贴士少一点", "少些贴士", "贴士频率低", "降低贴士"], reply: "💡 贴士频率已调低（10%）" },
+  { name: "normal", value: 0.3,  keywords: ["贴士正常", "恢复贴士", "默认贴士", "贴士默认"], reply: "💡 贴士频率已恢复默认（30%）" },
+  { name: "high",   value: 0.6,  keywords: ["贴士多一点", "多些贴士", "贴士频率高", "增加贴士"], reply: "💡 贴士频率已调高（60%）" },
+  { name: "always", value: 1.0,  keywords: ["打开贴士", "贴士开", "总是贴士", "每次都要贴士", "一直显示贴士", "开启贴士"], reply: "💡 贴士已开启，每次回复都会显示" },
+];
+
+/**
+ * 检测用户消息是否包含贴士频率控制指令
+ * @returns 匹配的预设，或 undefined 表示不是控制指令
+ */
+export function matchProbabilityCommand(userMessage: string): ProbabilityPreset | undefined {
+  const msg = userMessage.trim();
+  for (const preset of PROBABILITY_PRESETS) {
+    if (preset.keywords.some((kw) => msg.includes(kw))) {
+      return preset;
+    }
+  }
+  return undefined;
+}
+
 // ── 格式化 ──
 
 export function formatTipBlock(tip: Tip): string {

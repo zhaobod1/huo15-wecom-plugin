@@ -14,6 +14,7 @@ import {
   type TipsCustomConfig,
   buildEffectivePool,
   matchTipForScene,
+  matchProbabilityCommand,
   selectRandomTip,
   formatTipBlock,
 } from "./tips-data.js";
@@ -144,13 +145,31 @@ export function registerWecomTipsPet(
   // 构建有效贴士池（默认 + 自定义，模仿 Claude Code spinnerTipsOverride）
   const effectivePool = buildEffectivePool(tipsConfig?.custom);
 
-  // 捕获用户消息用于场景匹配
+  // 动态概率：每个对话可独立调节，默认使用配置值
+  const dynamicProbability = new Map<string, number>();
+
+  // 待发送的概率控制反馈消息（由 message_received 写入，transformer 消费）
+  const pendingProbabilityReply = new Map<string, string>();
+
+  // 捕获用户消息用于场景匹配 + 语言控制概率
   const lastUserMessages = new Map<string, string>();
 
   api.on("message_received", (event, ctx) => {
     if (ctx.channelId !== "wecom") return;
     const key = ctx.conversationId ?? ctx.accountId ?? "default";
     lastUserMessages.set(key, event.content);
+
+    // 检测概率控制指令
+    if (tipsEnabled) {
+      const cmd = matchProbabilityCommand(event.content);
+      if (cmd) {
+        dynamicProbability.set(key, cmd.value);
+        pendingProbabilityReply.set(key, cmd.reply);
+        api.logger.info(
+          `[wecom-tips] 概率调整: ${cmd.name} (${cmd.value}) for ${key}`,
+        );
+      }
+    }
   });
 
   // 注册传输层 Reply Transformer
@@ -163,9 +182,18 @@ export function registerWecomTipsPet(
     }
 
     let result = text;
+    const convKey = ctx.peerId;
 
-    // 处理贴士
-    if (tipsEnabled && (forceShow || Math.random() <= probability)) {
+    // 如果有待发送的概率控制反馈，追加到回复
+    const probReply = pendingProbabilityReply.get(convKey);
+    if (probReply) {
+      pendingProbabilityReply.delete(convKey);
+      result += `\n\n${probReply}`;
+    }
+
+    // 处理贴士（使用动态概率，不存在则用配置默认值）
+    const currentProb = dynamicProbability.get(convKey) ?? probability;
+    if (tipsEnabled && (forceShow || Math.random() <= currentProb)) {
       const userMsg = lastUserMessages.get(ctx.peerId) ?? "";
       const tip =
         sceneAware && userMsg
