@@ -116,7 +116,7 @@ const plugin = {
       };
     };
 
-    registerWecomTipsPet(api, config.tips, config.pet);
+    // registerWecomTipsPet(api, config.tips, config.pet); // 暂时禁用
   },
 };
 
