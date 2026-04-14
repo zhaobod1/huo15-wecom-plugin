@@ -1,8 +1,8 @@
 /**
  * 模块: 企微小贴士 + 火苗宠物
  *
- * Hook: before_agent_reply
- * 时机: AI 回复发送前，追加贴士和宠物
+ * Hook: after_agent_reply (修复：使用 after_agent_reply 确保能拿到完整回复)
+ * 时机: AI 回复发送后，追加贴士和宠物
  * 特性:
  * - 场景感知贴士
  * - 概率可配置
@@ -27,21 +27,6 @@ export interface WecomPetConfig {
   name?: string;
   color?: "orange" | "blue" | "purple" | "green" | "white";
 }
-
-// ── 默认配置 ──
-const DEFAULT_TIPS_CONFIG: WecomTipsConfig = {
-  enabled: true,
-  probability: 0.3,
-  forceShow: false,
-  sceneAware: true,
-  showPet: true,
-};
-
-const DEFAULT_PET_CONFIG: WecomPetConfig = {
-  enabled: true,
-  name: "小火苗",
-  color: "orange",
-};
 
 // ── 贴士注册表 ──
 interface Tip {
@@ -207,24 +192,29 @@ export function registerWecomTipsPet(
 
   if (!tipsEnabled && !petEnabled) return;
 
-  // ── Hook: before_agent_reply ──
-  api.on("before_agent_reply" as any, (event: any, ctx: any): any => {
+  // ── Hook: after_agent_reply ──
+  // 修复：使用 after_agent_reply 确保能拿到完整回复内容
+  api.on("after_agent_reply" as any, (event: any, ctx: any): any => {
     const agentId = (ctx?.agentId ?? "main").trim();
-    const body: string = event?.cleanedBody ?? "";
+    
+    // 获取回复内容 - 兼容不同格式
+    const replyText = event?.reply?.text ?? event?.text ?? "";
     const userMessage: string = ctx?.userMessage?.trim() ?? "";
 
     // 跳过空输出、NO_REPLY、HEARTBEAT_OK
-    const trimmed = body.trim().toUpperCase();
-    if (trimmed === "" || trimmed === "NO_REPLY" || trimmed === "HEARTBEAT_OK") {
+    const trimmed = replyText.trim().toUpperCase();
+    if (!replyText || trimmed === "" || trimmed === "NO_REPLY" || trimmed === "HEARTBEAT_OK") {
       return {};
     }
 
-    let newBody = body;
+    let newText = replyText;
+    let modified = false;
 
     // 处理贴士
     if (tipsEnabled && (forceShow || Math.random() <= probability)) {
       const tip = sceneAware && userMessage ? matchTip(userMessage) : TIPS_REGISTRY[Math.floor(Math.random() * TIPS_REGISTRY.length)];
-      newBody += formatTip(tip);
+      newText += formatTip(tip);
+      modified = true;
     }
 
     // 处理宠物
@@ -237,17 +227,21 @@ export function registerWecomTipsPet(
       }
       addXp(pet, 2);
       savePet(pet);
-      newBody += formatPet(pet);
+      newText += formatPet(pet);
+      modified = true;
     }
 
-    if (newBody === body) {
+    if (!modified || newText === replyText) {
       return {};
     }
 
+    api.logger.info(`[wecom-tips] 追加贴士/宠物到回复 (agent: ${agentId})`);
+
+    // 返回修改后的内容
     return {
       handled: true,
       reply: {
-        text: newBody,
+        text: newText,
         isError: event?.reply?.isError ?? false,
       },
     };
