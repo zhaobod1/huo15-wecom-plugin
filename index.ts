@@ -39,6 +39,13 @@ const wecomPluginConfigSchema = {
         forceShow: { type: "boolean" },
         sceneAware: { type: "boolean" },
         showPet: { type: "boolean" },
+        custom: {
+          type: "object" as const,
+          properties: {
+            excludeDefault: { type: "boolean" },
+            tips: { type: "array" as const, items: { type: "string" } },
+          },
+        },
       },
     },
     pet: {
@@ -108,6 +115,10 @@ const plugin = {
         forceShow?: boolean;
         sceneAware?: boolean;
         showPet?: boolean;
+        custom?: {
+          excludeDefault?: boolean;
+          tips?: string[];
+        };
       };
       pet?: {
         enabled?: boolean;

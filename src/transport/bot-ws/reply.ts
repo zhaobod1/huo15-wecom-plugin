@@ -7,7 +7,7 @@ import {
 } from "@wecom/aibot-node-sdk";
 import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
-import { getAccountRuntime, getWecomRuntime } from "../../runtime.js";
+import { getAccountRuntime, getReplyTransformer, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
 import { toWeComMarkdownV2 } from "../../wecom_msg_adapter/markdown_adapter.js";
 import { uploadAndSendBotWsMedia } from "./media.js";
@@ -349,37 +349,18 @@ export function createBotWsReplyHandle(params: {
         return;
       }
 
-      // 追加小火苗/贴士到最终文本（仅 final 非事件消息）
+      // 调用 reply transformer（智能贴士 + 火苗宠物）
       if (info.kind === "final" && params.inboundKind !== "welcome") {
-        try {
-          // 从共享 JSON 文件读取真实 pet 数据
-          const fs = await import("node:fs");
-          const stateFile = "/tmp/pet-state.json";
-          let petName = "小火苗", petLevel = 1, petXp = 0, petTotalXp = 0, petWarmth = 50, petBright = 60, petStable = 50, petLastFed = Date.now(), petColor = "orange";
+        const transformer = getReplyTransformer();
+        if (transformer) {
           try {
-            if (fs.existsSync(stateFile)) {
-              const s = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-              petName = s.name ?? petName;
-              petLevel = s.level ?? petLevel;
-              petXp = s.xp ?? petXp;
-              petTotalXp = s.totalXp ?? petTotalXp;
-              petWarmth = s.warmth ?? petWarmth;
-              petBright = s.brightness ?? petBright;
-              petStable = s.stability ?? petStable;
-              petLastFed = s.lastFed ?? petLastFed;
-              petColor = s.color ?? petColor;
-            }
-          } catch {}
-
-          const xpMax = petLevel * petLevel * 100;
-          const petUptime = Date.now() - petLastFed;
-          const hours = Math.floor(petUptime / 3600000);
-          const uptimeStr = hours < 1 ? "<1h" : hours < 24 ? `${hours}h` : `${Math.floor(hours/24)}d${hours%24}h`;
-
-          const petMd = `> 🟠 **${petName}** Lv.${petLevel}「${petColor}焰」\n> **经验** ${petXp}/${xpMax} XP\n> **温暖** ${petWarmth}% | **明亮** ${petBright}% | **稳定** ${petStable}%\n> **耐力** ${uptimeStr}\n> **总计** ${petTotalXp} XP`;
-          finalText = `${finalText}\n\n> 💡 **今日贴士**: 需要查 Odoo 数据？直接说「帮我查一下待办任务」，我会连接你的系统\n\n${petMd}`;
-        } catch (e) {
-          console.error("[wecom-ws] pet inject error:", e);
+            finalText = transformer(finalText, {
+              peerId,
+              accountId: params.accountId,
+            });
+          } catch (e) {
+            console.error("[wecom-ws] reply transformer error:", e);
+          }
         }
       }
 

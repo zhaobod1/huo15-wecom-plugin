@@ -3,7 +3,13 @@ import { clearWecomSourceAccount } from "../runtime/source-registry.js";
 import type { ReplyHandle } from "../types/index.js";
 import { WecomAccountRuntime } from "./account-runtime.js";
 
+export type ReplyTransformer = (
+  text: string,
+  ctx: { peerId: string; accountId: string },
+) => string;
+
 let runtime: PluginRuntime | null = null;
+let replyTransformer: ReplyTransformer | undefined;
 const runtimes = new Map<string, WecomAccountRuntime>();
 const botWsPushHandles = new Map<string, BotWsPushHandle>();
 const activeBotWsReplyHandlesBySession = new Map<string, ReplyHandle>();
@@ -172,6 +178,14 @@ export function unregisterActiveBotWsReplyHandle(params: {
 
 export function unregisterBotWsPushHandle(accountId: string): void {
   botWsPushHandles.delete(accountId);
+}
+
+export function setReplyTransformer(fn: ReplyTransformer): void {
+  replyTransformer = fn;
+}
+
+export function getReplyTransformer(): ReplyTransformer | undefined {
+  return replyTransformer;
 }
 
 export function unregisterAccountRuntime(accountId: string): void {
