@@ -2,7 +2,7 @@
  * Author: YanHaidao / 火一五定制版
  */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+// import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { registerWecomCalendarTools } from "./src/capability/calendar/tool.js";
 import { registerWecomDocTools } from "./src/capability/doc/tool.js";
 import { createWeComMcpToolFactory } from "./src/capability/mcp/index.js";
@@ -10,7 +10,8 @@ import { wecomPlugin } from "./src/channel.js";
 import { handleWecomWebhookRequest } from "./src/monitor.js";
 import { setWecomRuntime } from "./src/runtime.js";
 import { isWecomBotWsSource } from "./src/runtime/source-registry.js";
-import { registerWecomTipsPet } from "./src/modules/tips-pet.js";
+// [已移除] 小贴士+宠物模块 — 反复导致企微不回复，且与 enhance 插件冲突
+// import { registerWecomTipsPet } from "./src/modules/tips-pet.js";
 
 const WECOM_BOT_WS_MEDIA_GUIDANCE = [
   "【WeCom Bot WS 媒体发送】",
@@ -27,42 +28,16 @@ const WECOM_BOT_WS_MEDIA_GUIDANCE = [
   "- 语音消息仅原生支持 AMR；其他音频格式会按文件发送",
 ].join("\n");
 
-// ── 插件配置 Schema ──
+// ── 插件配置 Schema（tips/pet 已移除）──
 const wecomPluginConfigSchema = {
   type: "object" as const,
-  properties: {
-    tips: {
-      type: "object" as const,
-      properties: {
-        enabled: { type: "boolean" },
-        probability: { type: "number" },
-        forceShow: { type: "boolean" },
-        sceneAware: { type: "boolean" },
-        showPet: { type: "boolean" },
-        custom: {
-          type: "object" as const,
-          properties: {
-            excludeDefault: { type: "boolean" },
-            tips: { type: "array" as const, items: { type: "string" } },
-          },
-        },
-      },
-    },
-    pet: {
-      type: "object" as const,
-      properties: {
-        enabled: { type: "boolean" },
-        name: { type: "string" },
-        color: { type: "string", enum: ["orange", "blue", "purple", "green", "white"] },
-      },
-    },
-  },
+  properties: {},
 };
 
 const plugin = {
   id: "wecom",
   name: "WeCom (企业微信)",
-  description: "企业微信官方推荐三方插件，默认 Bot WS，支持主动发消息与统一运行时能力，火一五定制版（小贴士+火苗宠物）",
+  description: "企业微信官方推荐三方插件，默认 Bot WS，支持主动发消息与统一运行时能力，火一五定制版",
   configSchema: wecomPluginConfigSchema,
   /**
    * **register (注册插件)**
@@ -107,27 +82,7 @@ const plugin = {
       };
     });
 
-    // ── 注册小贴士+火苗宠物模块 ──
-    const config = (api.pluginConfig ?? {}) as {
-      tips?: {
-        enabled?: boolean;
-        probability?: number;
-        forceShow?: boolean;
-        sceneAware?: boolean;
-        showPet?: boolean;
-        custom?: {
-          excludeDefault?: boolean;
-          tips?: string[];
-        };
-      };
-      pet?: {
-        enabled?: boolean;
-        name?: string;
-        color?: "orange" | "blue" | "purple" | "green" | "white";
-      };
-    };
-
-    registerWecomTipsPet(api, config.tips, config.pet);
+    // [已移除] 小贴士+火苗宠物模块 — 导致企微不回复
   },
 };
 
