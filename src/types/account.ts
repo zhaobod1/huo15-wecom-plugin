@@ -47,8 +47,6 @@ export type ResolvedAgentAccount = {
   agentId?: number;
   token: string;
   encodingAESKey: string;
-  eventEnabled?: boolean;
-  allowedEventTypes?: string[];
   config: WecomAgentConfig;
   network?: WecomNetworkConfig;
 };
