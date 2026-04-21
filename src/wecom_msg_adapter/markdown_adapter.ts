@@ -100,12 +100,17 @@ function convertIndentedCodeBlocks(text: string): string {
 }
 
 function convertImages(text: string): string {
-  text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt: string, url: string) => {
+  // markdown_v2 原生支持 ![alt](url),保留语法让企微端渲染为图片。
+  // 仅做一次 alt/URL 规范化(trim、空 alt 补"图片")。
+  // 若上游已通过 extractMarkdownImages 提取并独立下发,这里不会再匹配到。
+  text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(\s+(?:"[^"]*"|'[^']*'))?\)/g, (_, alt: string, url: string, title: string | undefined) => {
     const safeAlt = (alt || "").trim() || "图片";
     const safeUrl = (url || "").trim();
-    return `[图片：${safeAlt}](${safeUrl})`;
+    if (!safeUrl) return "";
+    return title ? `![${safeAlt}](${safeUrl}${title})` : `![${safeAlt}](${safeUrl})`;
   });
 
+  // 引用式图片语法在企微里无法解析,直接降级为纯文本提示
   text = text.replace(/!\[([^\]]*)\]\[[^\]]*\]/g, (_, alt: string) => {
     const safeAlt = (alt || "").trim() || "图片";
     return `图片：${safeAlt}`;

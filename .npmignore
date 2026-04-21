@@ -1,0 +1,42 @@
+# Source-level exclusions for npm publish (not needed at runtime).
+# The plugin loads src/ TypeScript files directly via jiti, so dev artifacts
+# and docs get trimmed to keep the install tarball small and npm install fast.
+
+# Visual docs (assets are README images only, 3MB+)
+assets/
+changelog/
+
+# Internal docs not referenced by runtime
+SKILLS_CAL.md
+SKILLS_DOC.md
+UPSTREAM_CONFIG.md
+UPSTREAM_PLAN.md
+GOVERNANCE.md
+compat-single-account.md
+
+# CI / editor config
+.github/
+.vscode/
+.idea/
+
+# Dev scripts and test-only entries
+scripts/
+vitest.config.ts
+*.test.ts
+**/*.test.ts
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+coverage/
+
+# Lock files / dependency snapshots
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Misc local state
+.DS_Store
+node_modules/
+.openclaw/
+nul

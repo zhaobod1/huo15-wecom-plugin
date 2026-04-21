@@ -163,6 +163,12 @@
 > 项目保持高频迭代,全面对齐甚至超越企业真实业务诉求。
 > **为保持精简,以下仅展示近期 5 次重要更新,完整历史版本(含全部 `v2.2.x`)请前往 [changelog/ 目录](./changelog/) 查阅。**
 
+#### 📌 v2.7.4(2026-04-21)
+- **[格式升级] 自动抽取内联图片** 🖼️ 正文里的 `![alt](url)` 不再依赖企微 markdown_v2 自行拉取(CDN/外链图片渲染经常失败),插件在发送前主动下载上传得到 `media_id`,以独立 image 消息先于正文下发。失败时自动回退为内嵌 markdown 图片语法,不影响正文内容。Agent API 与 Bot WS 两条主动发送路径都已接入。
+- **[格式升级] `convertImages` 保留图片语法** 📝 `toWeComMarkdownV2` 不再把 `![alt](url)` 降级为 `[图片:alt](url)` 纯文本链接,改为规范化后保留图片语法,让企微 markdown_v2 有机会自行渲染(配合上面的抽取逻辑,常规场景以独立 image 消息优先)。
+- **[安装优化] 发布包裁剪至 ~900 kB** 📦 新增 `.npmignore`,排除 `assets/`、`changelog/`、`SKILLS_*`、测试文件、CI 工作流等运行时无用内容,安装包从 4.7MB 降至约 900kB,显著缩短 `openclaw plugins install` 的下载与 `npm install` 耗时,降低网络抖动触发静默 `npm install failed` 的概率。
+- **[新增工具] `src/wecom_msg_adapter/image_extractor.ts`** 🧰 导出 `extractMarkdownImages(md)` 返回 `{ images, residualText }`,便于其它渠道/上游 Agent 定制扩展图片处理。
+
 #### 📌 v2.7.3(2026-04-21)
 - **[格式升级] 全线切换到 `markdown_v2`** 🎨 自建应用(Agent API) / 群机器人(Bot WS) / 主动回复(Bot Webhook response_url)全部改用企微 2026 年新的 `markdown_v2` 消息类型,**原生支持 markdown 表格、图片 `![](url)`、粗体、链接、代码块、嵌套引用、列表**,消息上限从 2048 字节提到 4096 字节。
 - **[逻辑简化] 移除 textcard 降级路径** 🧹 以前遇到表格/大标题/链接会被"降级"成 textcard(title + 512 字纯文本描述,丢失 markdown 格式),现在统一走 markdown_v2,富文本完整渲染,不再需要 textcard workaround。

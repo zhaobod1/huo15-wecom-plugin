@@ -15,6 +15,8 @@ import {
 } from "./runtime.js";
 import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
 import { resolveScopedWecomTarget } from "./target.js";
+import { extractMarkdownImages } from "./wecom_msg_adapter/image_extractor.js";
+import { loadImageAsPayload } from "./wecom_msg_adapter/image_fetcher.js";
 import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
 
 type WecomOutboundBaseContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
@@ -201,17 +203,58 @@ async function sendTextViaBotWs(params: {
       `WeCom outbound account=${accountId} is configured for Bot WS active push, but the WS transport is not connected.`,
     );
   }
-  const markdownText = toWeComMarkdownV2(params.text);
-  console.log(
-    `[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${markdownText.length})`,
-  );
-  await handle.sendMarkdown(chatId, markdownText);
+
+  // 先把 markdown 内的 ![](url) 抽成独立图片消息,失败回退为内嵌 markdown
+  const { images, residualText } = extractMarkdownImages(params.text);
+  const mediaLocalRoots = resolveWecomMergedMediaLocalRoots({ cfg: params.cfg });
+  const maxBytes = resolveWecomMediaMaxBytes(params.cfg, accountId);
+  let textToSend = residualText;
+
+  for (const image of images) {
+    try {
+      const result = await handle.sendMedia({
+        chatId,
+        mediaUrl: image.url,
+        mediaLocalRoots,
+        maxBytes,
+      });
+      if (result.ok) {
+        console.log(
+          `[wecom-outbound] Sent Bot WS inline image to ${chatId} (src=${image.url})`,
+        );
+        continue;
+      }
+      const reason = result.rejectReason || result.error || "unknown";
+      console.warn(
+        `[wecom-outbound] Bot WS inline image failed (src=${image.url}): ${reason}, embedding back into markdown`,
+      );
+    } catch (imgErr) {
+      console.warn(
+        `[wecom-outbound] Bot WS inline image threw (src=${image.url}): ${imgErr instanceof Error ? imgErr.message : String(imgErr)}, embedding back into markdown`,
+      );
+    }
+    textToSend = textToSend
+      ? `${textToSend}\n\n![${image.alt}](${image.url})`
+      : `![${image.alt}](${image.url})`;
+  }
+
+  if (textToSend.trim()) {
+    const markdownText = toWeComMarkdownV2(textToSend);
+    console.log(
+      `[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${markdownText.length})`,
+    );
+    await handle.sendMarkdown(chatId, markdownText);
+    console.log(`[wecom-outbound] Successfully sent Bot WS active message to ${chatId}`);
+  } else if (images.length === 0) {
+    console.log(`[wecom-outbound] Empty Bot WS message to ${chatId}, skipped`);
+    return false;
+  }
+
   markActiveBotWsReplyHandleActivity({
     accountId,
     sessionKey: params.sessionKey,
     to: params.to,
   });
-  console.log(`[wecom-outbound] Successfully sent Bot WS active message to ${chatId}`);
   return true;
 }
 
@@ -340,21 +383,53 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         );
         const deliveryService = new WecomAgentDeliveryService(agent);
 
+        // 先把 markdown 中的 ![alt](url) 抽出来,单独作为 image 消息下发。
+        // 企微 markdown_v2 虽然声称支持 ![](url),实际 CDN/外链图片经常渲染失败,
+        // 用 uploadMedia + image 消息可靠性更高。失败时回退为内嵌 markdown 图片。
+        const { images, residualText } = extractMarkdownImages(outgoingText);
+        let textToSend = residualText;
+
+        for (const image of images) {
+          try {
+            const payload = await loadImageAsPayload(image.url);
+            await deliveryService.sendMedia({
+              to,
+              buffer: payload.buffer,
+              filename: payload.filename,
+              contentType: payload.contentType,
+            });
+            console.log(
+              `[wecom-outbound] Sent inline image to ${String(to ?? "")} (src=${image.url}, ${payload.buffer.length}B)`,
+            );
+          } catch (imgErr) {
+            console.warn(
+              `[wecom-outbound] Inline image upload failed (src=${image.url}), embedding back into markdown: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
+            );
+            textToSend = textToSend
+              ? `${textToSend}\n\n![${image.alt}](${image.url})`
+              : `![${image.alt}](${image.url})`;
+          }
+        }
+
         // markdown_v2 原生支持表格/链接/标题/粗体/代码块,不再需要 textcard 降级
-        const MARKDOWN_PATTERNS = /^#{1,6}\s|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\)|`[^`\n]+`|```|^>\s|^\s*[-*+]\s|\|.*\|/m;
-        if (MARKDOWN_PATTERNS.test(outgoingText)) {
-          const markdownText = toWeComMarkdownV2(outgoingText);
-          console.log(
-            `[wecom-outbound] Markdown features detected, sending as markdown_v2 to target=${String(to ?? "")} (len=${markdownText.length})`,
-          );
-          await deliveryService.sendMarkdown({ to, text: markdownText });
-          console.log(`[wecom-outbound] Successfully sent Agent markdown_v2 to ${String(to ?? "")}`);
-        } else {
-          await deliveryService.sendText({
-            to,
-            text: outgoingText,
-          });
-          console.log(`[wecom-outbound] Successfully sent Agent text to ${String(to ?? "")}`);
+        const MARKDOWN_PATTERNS = /^#{1,6}\s|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\)|`[^`\n]+`|```|^>\s|^\s*[-*+]\s|\|.*\||!\[[^\]\n]*\]\(/m;
+        if (textToSend.trim()) {
+          if (MARKDOWN_PATTERNS.test(textToSend)) {
+            const markdownText = toWeComMarkdownV2(textToSend);
+            console.log(
+              `[wecom-outbound] Markdown features detected, sending as markdown_v2 to target=${String(to ?? "")} (len=${markdownText.length})`,
+            );
+            await deliveryService.sendMarkdown({ to, text: markdownText });
+            console.log(`[wecom-outbound] Successfully sent Agent markdown_v2 to ${String(to ?? "")}`);
+          } else {
+            await deliveryService.sendText({
+              to,
+              text: textToSend,
+            });
+            console.log(`[wecom-outbound] Successfully sent Agent text to ${String(to ?? "")}`);
+          }
+        } else if (images.length === 0) {
+          console.log(`[wecom-outbound] Empty text, nothing to send to ${String(to ?? "")}`);
         }
       }
     } catch (err) {
