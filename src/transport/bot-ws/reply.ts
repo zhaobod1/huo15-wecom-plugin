@@ -373,9 +373,9 @@ export function createBotWsReplyHandle(params: {
         } else if (isEvent) {
           // Send push message for other events
           await params.client.sendMessage(peerId, {
-            msgtype: "markdown",
-            markdown: { content: toWeComMarkdownV2(finalText) },
-          });
+            msgtype: "markdown_v2",
+            markdown_v2: { content: toWeComMarkdownV2(finalText) },
+          } as unknown as Parameters<typeof params.client.sendMessage>[1]);
         } else {
           await params.client.replyStream(
             params.frame,
@@ -435,9 +435,9 @@ export function createBotWsReplyHandle(params: {
           });
         } else if (isEvent) {
           await params.client.sendMessage(peerId, {
-            msgtype: "markdown",
-            markdown: { content: text },
-          });
+            msgtype: "markdown_v2",
+            markdown_v2: { content: text },
+          } as unknown as Parameters<typeof params.client.sendMessage>[1]);
         } else {
           await params.client.replyStream(params.frame, resolveStreamId(), text, true);
         }

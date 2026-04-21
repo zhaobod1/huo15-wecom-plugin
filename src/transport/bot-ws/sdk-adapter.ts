@@ -68,9 +68,9 @@ export class BotWsSdkAdapter {
       },
       sendMarkdown: async (chatId, content) => {
         await client.sendMessage(chatId, {
-          msgtype: "markdown",
-          markdown: { content },
-        });
+          msgtype: "markdown_v2",
+          markdown_v2: { content },
+        } as unknown as Parameters<typeof client.sendMessage>[1]);
         this.runtime.touchTransportSession("bot-ws", {
           ownerId: this.ownerId,
           running: true,
@@ -90,9 +90,9 @@ export class BotWsSdkAdapter {
         });
         if (result.ok && text?.trim()) {
           await client.sendMessage(chatId, {
-            msgtype: "markdown",
-            markdown: { content: text.trim() },
-          });
+            msgtype: "markdown_v2",
+            markdown_v2: { content: text.trim() },
+          } as unknown as Parameters<typeof client.sendMessage>[1]);
         }
         this.runtime.touchTransportSession("bot-ws", {
           ownerId: this.ownerId,

@@ -15,7 +15,6 @@ import {
 } from "./runtime.js";
 import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
 import { resolveScopedWecomTarget } from "./target.js";
-import { toTextcardV1 } from "./wecom_msg_adapter/textcard_adapter.js";
 import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
 
 type WecomOutboundBaseContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
@@ -341,27 +340,15 @@ export const wecomOutbound: ChannelOutboundAdapter = {
         );
         const deliveryService = new WecomAgentDeliveryService(agent);
 
-        // Detect content type — route to textcard, markdown, or plain text
-        const hasBigHeading = /^#{1,2}\s/.test(outgoingText); // 大标题 → textcard
-        const hasTable = /\|.*\|/.test(outgoingText); // 表格 → textcard
-        const hasLink = /\[.*\]\(https?:\/\//.test(outgoingText); // 链接 → textcard
-        const hasComplexMarkdown = /```|#\s|###\s|\*\*.*\*\*|^>\s/.test(outgoingText); // 复杂md → textcard
-
-        const MARKDOWN_PATTERNS = /##|`|\*\*|\*\|\||---|^>\s|^[-*]\s/m;
-        if (hasBigHeading || hasTable || hasLink || hasComplexMarkdown) {
-          const textcard = toTextcardV1(outgoingText);
-          console.log(
-            `[wecom-outbound] Complex content detected (heading=${hasBigHeading} table=${hasTable} link=${hasLink} complex=${hasComplexMarkdown}), sending as textcard title=${JSON.stringify(textcard.title)} to target=${String(to ?? "")}`,
-          );
-          await deliveryService.sendTextcard({ to, ...textcard });
-          console.log(`[wecom-outbound] Successfully sent Agent textcard to ${String(to ?? "")}`);
-        } else if (MARKDOWN_PATTERNS.test(outgoingText)) {
+        // markdown_v2 原生支持表格/链接/标题/粗体/代码块,不再需要 textcard 降级
+        const MARKDOWN_PATTERNS = /^#{1,6}\s|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\)|`[^`\n]+`|```|^>\s|^\s*[-*+]\s|\|.*\|/m;
+        if (MARKDOWN_PATTERNS.test(outgoingText)) {
           const markdownText = toWeComMarkdownV2(outgoingText);
           console.log(
-            `[wecom-outbound] Markdown features detected, sending as markdown to target=${String(to ?? "")} (len=${markdownText.length})`,
+            `[wecom-outbound] Markdown features detected, sending as markdown_v2 to target=${String(to ?? "")} (len=${markdownText.length})`,
           );
           await deliveryService.sendMarkdown({ to, text: markdownText });
-          console.log(`[wecom-outbound] Successfully sent Agent markdown to ${String(to ?? "")}`);
+          console.log(`[wecom-outbound] Successfully sent Agent markdown_v2 to ${String(to ?? "")}`);
         } else {
           await deliveryService.sendText({
             to,

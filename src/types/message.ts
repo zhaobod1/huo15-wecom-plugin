@@ -186,4 +186,5 @@ export type WecomTemplateCard = {
 export type WecomOutboundMessage =
     | { msgtype: "text"; text: { content: string } }
     | { msgtype: "markdown"; markdown: { content: string } }
+    | { msgtype: "markdown_v2"; markdown_v2: { content: string } }
     | { msgtype: "template_card"; template_card: WecomTemplateCard };

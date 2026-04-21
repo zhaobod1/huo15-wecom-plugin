@@ -163,6 +163,11 @@
 > 项目保持高频迭代,全面对齐甚至超越企业真实业务诉求。
 > **为保持精简,以下仅展示近期 5 次重要更新,完整历史版本(含全部 `v2.2.x`)请前往 [changelog/ 目录](./changelog/) 查阅。**
 
+#### 📌 v2.7.3(2026-04-21)
+- **[格式升级] 全线切换到 `markdown_v2`** 🎨 自建应用(Agent API) / 群机器人(Bot WS) / 主动回复(Bot Webhook response_url)全部改用企微 2026 年新的 `markdown_v2` 消息类型,**原生支持 markdown 表格、图片 `![](url)`、粗体、链接、代码块、嵌套引用、列表**,消息上限从 2048 字节提到 4096 字节。
+- **[逻辑简化] 移除 textcard 降级路径** 🧹 以前遇到表格/大标题/链接会被"降级"成 textcard(title + 512 字纯文本描述,丢失 markdown 格式),现在统一走 markdown_v2,富文本完整渲染,不再需要 textcard workaround。
+- **[兼容注意]** ⚠️ markdown_v2 不支持 `<font color>` 标签和 `@userid` 群成员 at(原 markdown 支持),如果你依赖这两个特性请用 text 消息或保留 v1。本插件 adapter 本来就不生成这两个语法,用户无感。
+
 #### 📌 v2.7.2(2026-04-21)
 - **[Bug 修复] 引用群文件显示"COS链接过期"** 🔧 同步上游引用文件处理逻辑,新增 `channels.wecom.media.downloadTimeoutMs` 配置(默认 30s),分级区分超时/5 分钟 TTL 过期/网络错误,避免大文件抓取失败。
 - **[Bug 修复] 安装插件被安全扫描拦截** 🔒 移除上游已回滚的 `src/agent/script-runner.ts`(使用了 `child_process.spawn`),不再触发 OpenClaw 的 `dangerous-exec` 规则,v2.7.2 可以直接通过 `npm` 或 `clawhub` 方式安装。

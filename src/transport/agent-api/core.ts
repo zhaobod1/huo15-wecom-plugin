@@ -315,14 +315,14 @@ export async function sendMarkdown(params: {
     : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
 
   const body = useChat
-    ? { chatid: chatId, msgtype: "markdown", markdown: { content: text } }
+    ? { chatid: chatId, msgtype: "markdown_v2", markdown_v2: { content: text } }
     : {
         touser: toUser,
         toparty: toParty,
         totag: toTag,
-        msgtype: "markdown",
+        msgtype: "markdown_v2",
         agentid: requireAgentId(agent),
-        markdown: { content: text },
+        markdown_v2: { content: text },
       };
 
   const res = await wecomFetch(

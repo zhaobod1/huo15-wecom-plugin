@@ -420,8 +420,8 @@ describe("createBotWsReplyHandle", () => {
     await Promise.resolve();
 
     expect(mockClient.sendMessage).toHaveBeenCalledWith("alice", {
-      msgtype: "markdown",
-      markdown: { content: "Event Reply" },
+      msgtype: "markdown_v2",
+      markdown_v2: { content: "Event Reply" },
     });
   });
 
