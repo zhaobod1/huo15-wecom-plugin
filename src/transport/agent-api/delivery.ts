@@ -1,6 +1,6 @@
 import type { ResolvedAgentAccount } from "../../types/index.js";
 import type { WecomTarget } from "../../target.js";
-import { sendAgentApiMediaReply, sendAgentApiTextReply } from "./reply.js";
+import { sendAgentApiMediaReply, sendAgentApiMarkdownReply, sendAgentApiTextReply, sendAgentApiTextcardReply } from "./reply.js";
 import { uploadAgentApiMedia } from "./media-upload.js";
 
 export async function deliverAgentApiText(params: {
@@ -38,4 +38,23 @@ export async function deliverAgentApiMedia(params: {
     title: mediaType === "video" ? params.text?.trim().slice(0, 64) : undefined,
     description: mediaType === "video" ? params.text?.trim().slice(0, 512) : undefined,
   });
+}
+
+export async function deliverAgentApiMarkdown(params: {
+  agent: ResolvedAgentAccount;
+  target: WecomTarget;
+  text: string;
+}): Promise<void> {
+  await sendAgentApiMarkdownReply(params);
+}
+
+export async function deliverAgentApiTextcard(params: {
+  agent: ResolvedAgentAccount;
+  target: WecomTarget;
+  title: string;
+  description: string;
+  url?: string;
+  btntxt?: string;
+}): Promise<void> {
+  await sendAgentApiTextcardReply(params);
 }

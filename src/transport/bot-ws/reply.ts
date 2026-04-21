@@ -7,10 +7,11 @@ import {
 } from "@wecom/aibot-node-sdk";
 import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
-import { getWecomRuntime } from "../../runtime.js";
+import { getAccountRuntime, getReplyTransformer, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
 import { toWeComMarkdownV2 } from "../../wecom_msg_adapter/markdown_adapter.js";
 import { uploadAndSendBotWsMedia } from "./media.js";
+import { sendAgentApiText } from "../agent-api/client.js";
 
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
 const MAX_KEEPALIVE_MS = 120 * 1000; // Force stop keepalive after 120s if ignored
@@ -88,6 +89,8 @@ export function createBotWsReplyHandle(params: {
     (body?.chattype === "group" ? body?.chatid || body?.from?.userid : body?.from?.userid) ||
       "unknown",
   );
+  const peerKind: "direct" | "group" =
+    body?.chattype === "group" ? "group" : "direct";
   const reqId = params.frame.headers.req_id || "unknown";
 
   const isEvent =
@@ -170,6 +173,36 @@ export function createBotWsReplyHandle(params: {
     return deferredMediaUrls;
   };
 
+  /**
+   * Fallback delivery via Agent API when WS delivery fails or WS is disconnected.
+   * This ensures replies are still delivered even after gateway restart or WS reconnect.
+   */
+  const fallbackAgentApiDelivery = async (text: string): Promise<void> => {
+    const accountRuntime = getAccountRuntime(params.accountId);
+    const agent = accountRuntime?.account.agent;
+    if (!agent?.apiConfigured) {
+      console.warn(
+        `[wecom-ws] fallback: no agent API config for account=${params.accountId}, cannot deliver text fallback`,
+      );
+      return;
+    }
+    try {
+      if (peerKind === "group") {
+        await sendAgentApiText({ agent, chatId: peerId, text });
+      } else {
+        await sendAgentApiText({ agent, toUser: peerId, text });
+      }
+      console.log(
+        `[wecom-ws] fallback: delivered text via Agent API to ${peerKind}=${peerId}`,
+      );
+    } catch (err) {
+      console.error(
+        `[wecom-ws] fallback: Agent API delivery failed for ${peerKind}=${peerId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+  };
+
   if (params.autoSendPlaceholder !== false && !isEvent) {
     sendPlaceholder();
     placeholderKeepalive = setInterval(() => {
@@ -196,6 +229,8 @@ export function createBotWsReplyHandle(params: {
       transport: "bot-ws",
       accountId: params.accountId,
       reqId: params.frame.headers.req_id,
+      peerId,
+      peerKind,
       raw: {
         transport: "bot-ws",
         command: params.frame.cmd,
@@ -298,6 +333,37 @@ export function createBotWsReplyHandle(params: {
       }
 
       settleStream();
+
+      // Short-term fix: if WS is disconnected (e.g. after gateway restart),
+      // fall back to Agent API delivery to ensure the reply still reaches the user
+      if (!params.client.isConnected) {
+        console.warn(
+          `[wecom-ws] WS not connected for account=${params.accountId} peer=${peerId}, using fallback delivery`,
+        );
+        try {
+          await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
+          params.onDeliver?.();
+        } catch (err) {
+          params.onFail?.(err);
+        }
+        return;
+      }
+
+      // 调用 reply transformer（智能贴士 + 火苗宠物）
+      if (info.kind === "final" && params.inboundKind !== "welcome") {
+        const transformer = getReplyTransformer();
+        if (transformer) {
+          try {
+            finalText = transformer(finalText, {
+              peerId,
+              accountId: params.accountId,
+            });
+          } catch (e) {
+            console.error("[wecom-ws] reply transformer error:", e);
+          }
+        }
+      }
+
       try {
         if (params.inboundKind === "welcome") {
           await params.client.replyWelcome(params.frame, {
@@ -323,7 +389,17 @@ export function createBotWsReplyHandle(params: {
           params.onFail?.(error);
           return;
         }
-        throw error;
+        // WS delivery failed (may be disconnected mid-flight). Try fallback.
+        console.warn(
+          `[wecom-ws] WS delivery failed for ${peerId}: ${error instanceof Error ? error.message : String(error)}, trying fallback`,
+        );
+        try {
+          await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
+          params.onDeliver?.();
+        } catch (fallbackErr) {
+          params.onFail?.(fallbackErr);
+        }
+        return;
       }
       params.onDeliver?.();
     },
@@ -336,6 +412,20 @@ export function createBotWsReplyHandle(params: {
       }
       const message = formatErrorMessage(error);
       const text = `WeCom WS reply failed: ${message}`;
+
+      // Short-term fix: if WS is disconnected, use fallback delivery for error messages too
+      if (!params.client.isConnected) {
+        console.warn(
+          `[wecom-ws] WS not connected in fail() for account=${params.accountId} peer=${peerId}, using fallback`,
+        );
+        try {
+          await fallbackAgentApiDelivery(text);
+        } catch {
+          // fallback failed, still call onFail
+        }
+        params.onFail?.(error);
+        return;
+      }
 
       try {
         if (params.inboundKind === "welcome") {
@@ -352,6 +442,12 @@ export function createBotWsReplyHandle(params: {
           await params.client.replyStream(params.frame, resolveStreamId(), text, true);
         }
       } catch (sendError) {
+        // Fallback for send error
+        try {
+          await fallbackAgentApiDelivery(text);
+        } catch {
+          // fallback failed
+        }
         params.onFail?.(sendError);
         return;
       }

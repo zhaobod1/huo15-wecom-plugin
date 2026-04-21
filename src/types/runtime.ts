@@ -51,6 +51,9 @@ export type ReplyContext = {
   webhookNonce?: string;
   webhookTimestamp?: string;
   passiveWindowMs?: number;
+  /** WeCom peer identifier (userId for direct, chatId for group) */
+  peerId?: string;
+  peerKind?: "direct" | "group";
   raw: RawFrameReference;
 };
 
