@@ -6,69 +6,19 @@ export type WecomDmConfig = {
   allowFrom?: Array<string | number>;
 };
 
-export type WecomAgentEventPolicyConfig = {
-  allowedEventTypes?: string[];
-};
-
-export type WecomAgentInboundPolicyConfig = {
-  eventEnabled?: boolean;
-  eventPolicy?: WecomAgentEventPolicyConfig;
-};
-
-export type WecomAgentEventRouteMatchConfig = {
-  eventType?: string;
-  changeType?: string;
-  eventKey?: string;
-  eventKeyPrefix?: string;
-  eventKeyPattern?: string;
-};
-
-export type WecomAgentEventBuiltinHandlerName = "echo";
-
-export type WecomAgentEventRouteHandlerConfig =
-  | {
-      type: "builtin";
-      name?: WecomAgentEventBuiltinHandlerName;
-      chainToAgent?: boolean;
-    }
-  | {
-      type: "node_script" | "python_script";
-      entry: string;
-      timeoutMs?: number;
-      chainToAgent?: boolean;
-    };
-
-export type WecomAgentEventRouteConfig = {
-  id?: string;
-  when?: WecomAgentEventRouteMatchConfig;
-  handler: WecomAgentEventRouteHandlerConfig;
-};
-
-export type WecomAgentEventRoutingConfig = {
-  unmatchedAction?: "ignore" | "forwardToAgent";
-  routes?: WecomAgentEventRouteConfig[];
-};
-
-export type WecomAgentScriptRuntimeConfig = {
-  enabled?: boolean;
-  allowPaths?: string[];
-  maxStdoutBytes?: number;
-  maxStderrBytes?: number;
-  defaultTimeoutMs?: number;
-  pythonCommand?: string;
-  nodeCommand?: string;
-};
-
 export type WecomMediaConfig = {
   tempDir?: string;
   retentionHours?: number;
   cleanupOnStart?: boolean;
   maxBytes?: number;
+  downloadTimeoutMs?: number;
   localRoots?: string[];
 };
 
 export type WecomNetworkConfig = {
   egressProxyUrl?: string;
+  timeoutMs?: number;
+  mediaDownloadTimeoutMs?: number;
 };
 
 export type WecomRoutingConfig = {
@@ -124,9 +74,6 @@ export type WecomAgentConfig = {
   encodingAESKey: string;
   welcomeText?: string;
   dm?: WecomDmConfig;
-  inboundPolicy?: WecomAgentInboundPolicyConfig;
-  eventRouting?: WecomAgentEventRoutingConfig;
-  scriptRuntime?: WecomAgentScriptRuntimeConfig;
   /**
    * 上下游企业配置映射
    * key: 配置名称（可自定义）
@@ -155,6 +102,7 @@ export type WecomAccountConfig = {
 export type WecomConfig = {
   enabled?: boolean;
   mediaMaxMb?: number;
+  mediaDownloadTimeoutMs?: number;
   bot?: WecomBotConfig;
   agent?: WecomAgentConfig;
   accounts?: Record<string, WecomAccountConfig>;

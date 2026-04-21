@@ -3,71 +3,19 @@ export interface DmConfig {
   allowFrom?: (string | number)[];
 }
 
-export interface AgentEventPolicyConfig {
-  allowedEventTypes?: string[];
-}
-
-export interface AgentInboundPolicyConfig {
-  eventEnabled?: boolean;
-  eventPolicy?: AgentEventPolicyConfig;
-}
-
-export interface AgentEventRouteMatchConfig {
-  eventType?: string;
-  changeType?: string;
-  eventKey?: string;
-  eventKeyPrefix?: string;
-  eventKeyPattern?: string;
-}
-
-export interface AgentEventRouteHandlerBuiltinConfig {
-  type: "builtin";
-  name?: "echo";
-  chainToAgent?: boolean;
-}
-
-export interface AgentEventRouteHandlerScriptConfig {
-  type: "node_script" | "python_script";
-  entry: string;
-  timeoutMs?: number;
-  chainToAgent?: boolean;
-}
-
-export type AgentEventRouteHandlerConfig =
-  | AgentEventRouteHandlerBuiltinConfig
-  | AgentEventRouteHandlerScriptConfig;
-
-export interface AgentEventRouteConfig {
-  id?: string;
-  when?: AgentEventRouteMatchConfig;
-  handler: AgentEventRouteHandlerConfig;
-}
-
-export interface AgentEventRoutingConfig {
-  unmatchedAction?: "ignore" | "forwardToAgent";
-  routes?: AgentEventRouteConfig[];
-}
-
-export interface AgentScriptRuntimeConfig {
-  enabled?: boolean;
-  allowPaths?: string[];
-  maxStdoutBytes?: number;
-  maxStderrBytes?: number;
-  defaultTimeoutMs?: number;
-  pythonCommand?: string;
-  nodeCommand?: string;
-}
-
 export interface MediaConfig {
   tempDir?: string;
   retentionHours?: number;
   cleanupOnStart?: boolean;
   maxBytes?: number;
+  downloadTimeoutMs?: number;
   localRoots?: string[];
 }
 
 export interface NetworkConfig {
   egressProxyUrl?: string;
+  timeoutMs?: number;
+  mediaDownloadTimeoutMs?: number;
 }
 
 export interface RoutingConfig {
@@ -105,9 +53,6 @@ export interface AgentConfig {
   encodingAESKey: string;
   welcomeText?: string;
   dm?: DmConfig;
-  inboundPolicy?: AgentInboundPolicyConfig;
-  eventRouting?: AgentEventRoutingConfig;
-  scriptRuntime?: AgentScriptRuntimeConfig;
 }
 
 export interface DynamicAgentsConfig {
@@ -128,6 +73,7 @@ export interface AccountConfig {
 export interface WecomConfigInput {
   enabled?: boolean;
   mediaMaxMb?: number;
+  mediaDownloadTimeoutMs?: number;
   bot?: BotConfig;
   agent?: AgentConfig;
   accounts?: Record<string, AccountConfig>;

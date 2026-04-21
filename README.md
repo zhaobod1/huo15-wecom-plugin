@@ -163,6 +163,12 @@
 > 项目保持高频迭代,全面对齐甚至超越企业真实业务诉求。
 > **为保持精简,以下仅展示近期 5 次重要更新,完整历史版本(含全部 `v2.2.x`)请前往 [changelog/ 目录](./changelog/) 查阅。**
 
+#### 📌 v2.7.2(2026-04-21)
+- **[Bug 修复] 引用群文件显示"COS链接过期"** 🔧 同步上游引用文件处理逻辑,新增 `channels.wecom.media.downloadTimeoutMs` 配置(默认 30s),分级区分超时/5 分钟 TTL 过期/网络错误,避免大文件抓取失败。
+- **[Bug 修复] 安装插件被安全扫描拦截** 🔒 移除上游已回滚的 `src/agent/script-runner.ts`(使用了 `child_process.spawn`),不再触发 OpenClaw 的 `dangerous-exec` 规则,v2.7.2 可以直接通过 `npm` 或 `clawhub` 方式安装。
+- **[上游同步] 合并 yanhaidao/wecom 至 c1158a9** 📦 包含引用附件在群聊/私聊中透传、媒体下载超时配置、菜单事件文档等;同时吸收上游对 jjjkkil 两次 agentcation PR 的 revert。
+- **[版本对齐] 保留 `@huo15/wecom` 独立包名** 📦 包名保持 `@huo15/wecom`,版本号跳至 `2.7.2`。
+
 #### 📌 v2.3.273(2026-03-31)
 - **[重要修复] WS 断连 Fallback** 🔧 耗时任务/Gateway 重启/WS 断线重连时,Bot WS 自动切换到 Agent API 发送回复,不再出现"机器人没反应"的问题。
 - **[markdown 修复] 表格和代码块渲染恢复** 📦 从 main 分支合并,表格不再强制转为纯文本,保留 markdown 格式。

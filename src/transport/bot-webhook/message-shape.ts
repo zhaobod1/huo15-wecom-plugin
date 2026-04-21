@@ -52,6 +52,8 @@ function formatQuote(quote: WecomInboundQuote): string {
   }
   if (type === "voice") return `[引用: 语音] ${quote.voice?.content || ""}`;
   if (type === "file") return `[引用: 文件] ${quote.file?.url || ""}`;
+  // 新增支持：引用视频类型 - 将在入站正规化中提取媒体并落盘
+  if (type === "video") return `[引用: 视频] ${quote.video?.url || ""}`;
   return "";
 }
 
@@ -76,6 +78,7 @@ export function buildInboundBody(msg: WecomInboundMessage): string {
     } else body = "[mixed]";
   } else if (msgtype === "image") body = `[image] ${(msg as any).image?.url || ""}`;
   else if (msgtype === "file") body = `[file] ${(msg as any).file?.url || ""}`;
+  else if (msgtype === "video") body = `[video] ${(msg as any).video?.url || ""}`;
   else if (msgtype === "event") body = `[event] ${(msg as any).event?.eventtype || ""}`;
   else if (msgtype === "stream") body = `[stream_refresh] ${(msg as any).stream?.id || ""}`;
   else body = msgtype ? `[${msgtype}]` : "";

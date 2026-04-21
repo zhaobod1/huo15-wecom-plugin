@@ -22,11 +22,25 @@ function resolveInboundKind(message: BaseMessage | EventMessage): WecomInboundKi
       return "file";
     case "voice":
       return "voice";
+    case "video":
+      return "video";
     case "mixed":
       return "mixed";
     default:
       return "text";
   }
+}
+
+function pushAttachment(
+  list: NonNullable<UnifiedInboundEvent["attachments"]>,
+  name: "image" | "file" | "video",
+  remoteUrl?: string,
+  aesKey?: string,
+): void {
+  if (!remoteUrl) {
+    return;
+  }
+  list.push({ name, remoteUrl, aesKey });
 }
 
 function resolveEventText(message: BaseMessage | EventMessage, account: ResolvedBotAccount): string {
@@ -39,46 +53,6 @@ function resolveEventText(message: BaseMessage | EventMessage, account: Resolved
     return account.config.welcomeText;
   }
   return `[event:${String(event.event?.eventtype ?? "unknown")}]`;
-}
-
-/**
- * **extractQuoteAttachments (从引用消息中提取附件)**
- *
- * 处理带引用的消息（如回复文件/图片），从 quote 字段提取附件信息。
- * 修复问题：当用户发送文本消息引用一个文件时，该文件URL会被当作普通文本而不是下载附件。
- * 这导致AI访问该URL时已经过期。
- */
-function extractQuoteAttachments(body: any): UnifiedInboundEvent["attachments"] {
-  const quote = body?.quote;
-  if (!quote) return undefined;
-
-  const quoteMsgtype = String(quote.msgtype ?? "").toLowerCase();
-
-  // 引用的是文件
-  if (quoteMsgtype === "file" && quote.file?.url) {
-    return [{ name: "file", remoteUrl: quote.file.url, aesKey: quote.file.aeskey }];
-  }
-
-  // 引用的是图片
-  if (quoteMsgtype === "image" && quote.image?.url) {
-    return [{ name: "image", remoteUrl: quote.image.url, aesKey: quote.image.aeskey }];
-  }
-
-  // 引用的是混合消息 (mixed)
-  if (quoteMsgtype === "mixed" && Array.isArray(quote.mixed?.msg_item)) {
-    const attachments: UnifiedInboundEvent["attachments"] = [];
-    for (const item of quote.mixed.msg_item) {
-      const itemType = String(item.msgtype ?? "").toLowerCase();
-      if (itemType === "image" && item.image?.url) {
-        attachments.push({ name: "image", remoteUrl: item.image.url, aesKey: item.image.aeskey });
-      } else if (itemType === "file" && item.file?.url) {
-        attachments.push({ name: "file", remoteUrl: item.file.url, aesKey: item.file.aeskey });
-      }
-    }
-    return attachments.length > 0 ? attachments : undefined;
-  }
-
-  return undefined;
 }
 
 export function mapBotWsFrameToInboundEvent(params: {
@@ -96,30 +70,58 @@ export function mapBotWsFrameToInboundEvent(params: {
   const inboundKind = resolveInboundKind(body);
 
   let attachments: UnifiedInboundEvent["attachments"];
+  const collected: NonNullable<UnifiedInboundEvent["attachments"]> = [];
   if (body.msgtype === "image") {
-    attachments = [{ name: "image", remoteUrl: (body as any).image?.url, aesKey: (body as any).image?.aeskey }];
+    pushAttachment(collected, "image", (body as any).image?.url, (body as any).image?.aeskey);
   } else if (body.msgtype === "file") {
-    attachments = [{ name: "file", remoteUrl: (body as any).file?.url, aesKey: (body as any).file?.aeskey }];
+    pushAttachment(collected, "file", (body as any).file?.url, (body as any).file?.aeskey);
+  } else if (body.msgtype === "video") {
+    pushAttachment(collected, "video", (body as any).video?.url, (body as any).video?.aeskey);
   } else if (body.msgtype === "mixed") {
     const items = (body as any).mixed?.msg_item;
     if (Array.isArray(items)) {
-      attachments = [];
       for (const item of items) {
-        if (item.msgtype === "image" && item.image?.url) {
-          attachments.push({ name: "image", remoteUrl: item.image.url, aesKey: item.image.aeskey });
-        } else if (item.msgtype === "file" && item.file?.url) {
-          attachments.push({ name: "file", remoteUrl: item.file.url, aesKey: item.file.aeskey });
+        const itemType = String(item.msgtype ?? "").toLowerCase();
+        if (itemType === "image") {
+          pushAttachment(collected, "image", item.image?.url, item.image?.aeskey);
+        } else if (itemType === "file") {
+          pushAttachment(collected, "file", item.file?.url, item.file?.aeskey);
+        } else if (itemType === "video") {
+          pushAttachment(collected, "video", item.video?.url, item.video?.aeskey);
         }
-      }
-      if (attachments.length === 0) {
-        attachments = undefined;
       }
     }
   }
 
-  // 补充：从 quote 字段提取附件（修复引用文件URL过期问题）
-  if (!attachments) {
-    attachments = extractQuoteAttachments(body);
+  // 新增支持：如果没有顶层媒体，尝试从引用中提取媒体附件
+  // 优先级：quote.image/file/video 优先，其次 quote.mixed 中第一个图片
+  if (collected.length === 0) {
+    const quote = (body as any).quote;
+    if (quote) {
+      const quoteType = String(quote.msgtype ?? "").toLowerCase();
+      // 处理单个媒体类型的引用
+      if (quoteType === "image") {
+        pushAttachment(collected, "image", quote.image?.url, quote.image?.aeskey);
+      } else if (quoteType === "file") {
+        pushAttachment(collected, "file", quote.file?.url, quote.file?.aeskey);
+      } else if (quoteType === "video") {
+        pushAttachment(collected, "video", quote.video?.url, quote.video?.aeskey);
+      } 
+      // 处理图文混合类型：只提取第一个图片以保持与 webhook 一致
+      else if (quoteType === "mixed" && Array.isArray(quote.mixed?.msg_item)) {
+        for (const item of quote.mixed.msg_item) {
+          const itemType = String(item.msgtype ?? "").toLowerCase();
+          if (itemType === "image") {
+            pushAttachment(collected, "image", item.image?.url, item.image?.aeskey);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (collected.length > 0) {
+    attachments = collected;
   }
 
   return {
@@ -156,6 +158,6 @@ export function mapBotWsFrameToInboundEvent(params: {
         envelopeType: "ws",
       },
     },
-    attachments,
+    ...(attachments && { attachments }),
   };
 }
