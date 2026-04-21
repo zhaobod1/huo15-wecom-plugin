@@ -367,5 +367,74 @@ export async function processBotInboundMessage(params: {
     }
   }
 
+  // 处理带引用的文本消息中的附件（修复引用文件URL过期问题）
+  // 当 msgtype === "text" 但有 quote 附件时，需要下载并解密
+  if ((msgtype === "text" || !msgtype) && aesKey) {
+    const quote = (msg as any).quote;
+    if (quote) {
+      const quoteMsgtype = String(quote.msgtype ?? "").toLowerCase();
+
+      // 引用的是文件
+      if (quoteMsgtype === "file" && quote.file?.url) {
+        const url = String(quote.file.url).trim();
+        if (url) {
+          try {
+            const decrypted = await decryptWecomMediaWithMeta(url, aesKey, { maxBytes, http: { proxyUrl } });
+            const inferred = inferInboundMediaMeta({
+              kind: "file",
+              buffer: decrypted.buffer,
+              sourceUrl: decrypted.sourceUrl || url,
+              sourceContentType: decrypted.sourceContentType,
+              sourceFilename: decrypted.sourceFilename,
+              explicitFilename: pickBotFileName(msg, quote),
+            });
+            // 返回原文（包含quote文本）并附带下载的文件
+            return { body: buildInboundBody(msg), media: { buffer: decrypted.buffer, contentType: inferred.contentType, filename: inferred.filename } };
+          } catch (err) {
+            target.runtime.error?.(`引用文件解密失败: ${String(err)}`);
+            recordOperationalIssue({
+              category: "media-decrypt-failed",
+              messageId: msg.msgid ? String(msg.msgid) : undefined,
+              summary: `quote file decrypt failed url=${url}`,
+              raw: { transport: "bot-webhook", envelopeType: "json", body: msg },
+              error: err instanceof Error ? err.message : String(err),
+            });
+            // 下载失败时仍返回原文（包含错误提示）
+            return { body: buildInboundBody(msg) };
+          }
+        }
+      }
+
+      // 引用的是图片
+      if (quoteMsgtype === "image" && quote.image?.url) {
+        const url = String(quote.image.url).trim();
+        if (url) {
+          try {
+            const decrypted = await decryptWecomMediaWithMeta(url, aesKey, { maxBytes, http: { proxyUrl } });
+            const inferred = inferInboundMediaMeta({
+              kind: "image",
+              buffer: decrypted.buffer,
+              sourceUrl: decrypted.sourceUrl || url,
+              sourceContentType: decrypted.sourceContentType,
+              sourceFilename: decrypted.sourceFilename,
+              explicitFilename: pickBotFileName(msg, quote),
+            });
+            return { body: buildInboundBody(msg), media: { buffer: decrypted.buffer, contentType: inferred.contentType, filename: inferred.filename } };
+          } catch (err) {
+            target.runtime.error?.(`引用图片解密失败: ${String(err)}`);
+            recordOperationalIssue({
+              category: "media-decrypt-failed",
+              messageId: msg.msgid ? String(msg.msgid) : undefined,
+              summary: `quote image decrypt failed url=${url}`,
+              raw: { transport: "bot-webhook", envelopeType: "json", body: msg },
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { body: buildInboundBody(msg) };
+          }
+        }
+      }
+    }
+  }
+
   return { body: buildInboundBody(msg) };
 }
