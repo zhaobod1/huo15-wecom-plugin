@@ -134,10 +134,42 @@ export function resolveWecomContextTarget(raw: string | undefined): { contextTok
  * 
  * @param raw - The raw target string (e.g. "party:1", "zhangsan", "wecom:user:xxx")
  */
+/**
+ * Broadcast literal guard.
+ * 企业微信 API 允许 touser="@all" 将消息推送到应用可见范围内全员。
+ * 主 Agent 曾在群聊场景误把 "@all" 作为 `to` 传进来，导致文件泄露给全员。
+ * 这里是防御性闸门：遇到任何广播字面量一律拒绝。如果确实需要部门/标签广播，
+ * 调用方必须显式使用 `party:<id>` / `tag:<id>` 前缀并自行承担范围确认责任。
+ */
+const BROADCAST_LITERALS = new Set(["@all", "@everyone", "*", "all"]);
+
+export function isBroadcastLiteral(raw: string | undefined): boolean {
+    const trimmed = raw?.trim().toLowerCase();
+    if (!trimmed) return false;
+    return BROADCAST_LITERALS.has(trimmed);
+}
+
 export function resolveWecomTarget(raw: string | undefined, options?: { preferUserForDigits?: boolean }): WecomTarget | undefined {
     if (!raw?.trim()) return undefined;
 
     const trimmed = raw.trim();
+
+    // 0. Broadcast literal guard — refuse `@all` / `@everyone` / `*` outright.
+    // 任何落到这里的广播字面量都返回 undefined，让上游 resolveTargetOrThrow 给出清晰报错。
+    if (isBroadcastLiteral(trimmed)) {
+        console.warn(`[wecom-target] refusing broadcast literal target=${trimmed}`);
+        return undefined;
+    }
+
+    // Also reject the stripped form (e.g. `wecom:user:@all` or `user:@all`).
+    const strippedForCheck = trimmed
+        .replace(/^(wecom-agent|wecom|wechatwork|wework|qywx):/i, "")
+        .replace(/^(user|group|chat|party|dept|tag):/i, "")
+        .trim();
+    if (isBroadcastLiteral(strippedForCheck)) {
+        console.warn(`[wecom-target] refusing broadcast literal (stripped) target=${trimmed}`);
+        return undefined;
+    }
 
     // 1. 先检查原始字符串中的类型前缀（处理 user:xxx 无前缀格式）
     // 这样即使没有 wecom: 前缀，也能正确识别类型
