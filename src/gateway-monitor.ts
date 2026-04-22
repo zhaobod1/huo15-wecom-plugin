@@ -14,11 +14,13 @@ import { registerAccountRuntime, unregisterAccountRuntime } from "./app/index.js
 import type { ResolvedWecomAccount, WecomConfig } from "./types/index.js";
 import { WecomBotCapabilityService } from "./capability/bot/index.js";
 import { WecomAgentIngressService } from "./capability/agent/index.js";
+import { WecomKefuCapabilityService } from "./capability/kefu/index.js";
 import type { WecomRuntimeEnv } from "./types/runtime-context.js";
 
 type AccountRouteRegistryItem = {
   botPaths: string[];
   agentPaths: string[];
+  kefuPaths: string[];
 };
 
 const accountRouteRegistry = new Map<string, AccountRouteRegistryItem>();
@@ -45,7 +47,8 @@ function logRegisteredRouteSummary(
       if (!routes) return undefined;
       const botText = routes.botPaths.length > 0 ? routes.botPaths.join(", ") : "未启用";
       const agentText = routes.agentPaths.length > 0 ? routes.agentPaths.join(", ") : "未启用";
-      return `accountId=${accountId}（Bot: ${botText}；Agent: ${agentText}）`;
+      const kefuText = routes.kefuPaths.length > 0 ? routes.kefuPaths.join(", ") : "未启用";
+      return `accountId=${accountId}（Bot: ${botText}；Agent: ${agentText}；Kefu: ${kefuText}）`;
     })
     .filter((entry): entry is string => Boolean(entry));
   const summary = entries.length > 0 ? entries.join("； ") : "无";
@@ -59,7 +62,7 @@ function resolveExpectedRouteSummaryAccountIds(cfg: OpenClawConfig): string[] {
       if (conflict) return false;
       const account = resolveWecomAccount({ cfg, accountId });
       if (!account.enabled || !account.configured) return false;
-      return Boolean(account.bot?.configured || account.agent?.configured);
+      return Boolean(account.bot?.configured || account.agent?.configured || account.kefu?.configured);
     })
     .sort((a, b) => a.localeCompare(b));
 }
@@ -102,10 +105,12 @@ export async function monitorWecomProvider(
   }
   const bot = account.bot;
   const agent = account.agent;
+  const kefu = account.kefu;
   const botConfigured = Boolean(bot?.configured);
   const agentConfigured = Boolean(agent?.configured);
+  const kefuConfigured = Boolean(kefu?.configured);
 
-  if (!botConfigured && !agentConfigured) {
+  if (!botConfigured && !agentConfigured && !kefuConfigured) {
     ctx.log?.warn(`[${account.accountId}] wecom not configured; channel is idle`);
     ctx.setStatus({ accountId: account.accountId, running: false, configured: false });
     await waitForAbortSignal(ctx.abortSignal);
@@ -116,6 +121,7 @@ export async function monitorWecomProvider(
   registerAccountRuntime(accountRuntime);
   const botPaths: string[] = [];
   const agentPaths: string[] = [];
+  const kefuPaths: string[] = [];
   const runtimeEnv: WecomRuntimeEnv = {
     log: (message) => ctx.log?.info(message),
     error: (message) => ctx.log?.error(message),
@@ -126,9 +132,10 @@ export async function monitorWecomProvider(
     runtimeEnv,
   );
   const agentIngress = new WecomAgentIngressService(accountRuntime, cfg, runtimeEnv);
+  const kefuService = new WecomKefuCapabilityService(accountRuntime, cfg, runtimeEnv);
   try {
     ctx.log?.info(
-      `[${account.accountId}] wecom runtime start bot=${bot?.primaryTransport ?? "disabled"} agent=${agentConfigured ? "callback/api" : "disabled"}`,
+      `[${account.accountId}] wecom runtime start bot=${bot?.primaryTransport ?? "disabled"} agent=${agentConfigured ? "callback/api" : "disabled"} kefu=${kefuConfigured ? "callback" : "disabled"}`,
     );
     const botRegistration = botService.start();
     if (botRegistration) {
@@ -146,7 +153,15 @@ export async function monitorWecomProvider(
       );
     }
 
-    accountRouteRegistry.set(account.accountId, { botPaths, agentPaths });
+    const kefuRegistration = kefuService.start();
+    if (kefuRegistration) {
+      kefuPaths.push(...kefuRegistration.descriptors);
+      ctx.log?.info(
+        `[${account.accountId}] wecom kefu ${kefuRegistration.transport} started: ${kefuRegistration.descriptors.join(", ")}`,
+      );
+    }
+
+    accountRouteRegistry.set(account.accountId, { botPaths, agentPaths, kefuPaths });
     const shouldLogSummary =
       expectedRouteSummaryAccountIds.length <= 1 ||
       expectedRouteSummaryAccountIds.every((accountId) => accountRouteRegistry.has(accountId));
@@ -157,7 +172,7 @@ export async function monitorWecomProvider(
     ctx.setStatus({
       running: true,
       configured: true,
-      webhookPath: botPaths[0] ?? agentPaths[0] ?? null,
+      webhookPath: botPaths[0] ?? agentPaths[0] ?? kefuPaths[0] ?? null,
       lastStartAt: Date.now(),
       ...accountRuntime.buildRuntimeStatus(),
     });
@@ -169,6 +184,7 @@ export async function monitorWecomProvider(
   } finally {
     botService.stop();
     agentIngress.stop();
+    kefuService.stop();
     accountRouteRegistry.delete(account.accountId);
     unregisterAccountRuntime(account.accountId);
     ctx.setStatus({

@@ -163,11 +163,12 @@
 > 项目保持高频迭代,全面对齐甚至超越企业真实业务诉求。
 > **为保持精简,以下仅展示近期 5 次重要更新,完整历史版本(含全部 `v2.2.x`)请前往 [changelog/ 目录](./changelog/) 查阅。**
 
-#### 📌 v2.7.4(2026-04-21)
-- **[格式升级] 自动抽取内联图片** 🖼️ 正文里的 `![alt](url)` 不再依赖企微 markdown_v2 自行拉取(CDN/外链图片渲染经常失败),插件在发送前主动下载上传得到 `media_id`,以独立 image 消息先于正文下发。失败时自动回退为内嵌 markdown 图片语法,不影响正文内容。Agent API 与 Bot WS 两条主动发送路径都已接入。
-- **[格式升级] `convertImages` 保留图片语法** 📝 `toWeComMarkdownV2` 不再把 `![alt](url)` 降级为 `[图片:alt](url)` 纯文本链接,改为规范化后保留图片语法,让企微 markdown_v2 有机会自行渲染(配合上面的抽取逻辑,常规场景以独立 image 消息优先)。
-- **[安装优化] 发布包裁剪至 ~900 kB** 📦 新增 `.npmignore`,排除 `assets/`、`changelog/`、`SKILLS_*`、测试文件、CI 工作流等运行时无用内容,安装包从 4.7MB 降至约 900kB,显著缩短 `openclaw plugins install` 的下载与 `npm install` 耗时,降低网络抖动触发静默 `npm install failed` 的概率。
-- **[新增工具] `src/wecom_msg_adapter/image_extractor.ts`** 🧰 导出 `extractMarkdownImages(md)` 返回 `{ images, residualText }`,便于其它渠道/上游 Agent 定制扩展图片处理。
+#### 📌 v2.8.0(2026-04-22)
+- **[能力扩充] 微信客服(kefu)全通道落地** 🆕 Agent/Bot 之外,新增“企业微信客服”作为第三条消息通道:外部客户在微信、视频号、对外小程序里发给客服号的消息可直接走到 OpenClaw 里回复。配置独立(`channels.wecom.accounts.<id>.kefu.{corpId,corpSecret,openKfIds,webhook}`),`corpSecret` 允许与 Agent 分开建一套“只给客服用”的 Secret。
+- **[通道独立] 回调路径解耦** 🛣️ 客服挂载到独立路径 `/plugins/wecom/kefu`(推荐)或 `/plugins/wecom/kefu/<accountId>`,与 Bot / Agent 路径互不冲突。企微客服回调只携带 Token,插件内部调用 `kf/sync_msg` 按 `open_kfid` 维度维护 cursor 完整拉取,配合 LRU `msgid` 去重与 in-flight 并发守卫,确保消息不重、不漏。
+- **[入向覆盖] 10 类消息全量归一** 📥 text/image/voice/video/file/link/miniprogram/msgmenu/location/business_card/event(含 `enter_session` 映射成 `welcome`)均已 normalize 成 `UnifiedInboundEvent`,下游 Agent 无感消费。
+- **[出向能力] send_msg 一体化** 📤 text 按 3500 字符切片避开 4096 字节上限、media 由 content-type+扩展名分类分别走 image/voice/video/file,link 走 `payload.channelData.kefu.link` 专用卡片,统一走 `upload_media` 拿 `media_id` 后下发。新增 `toKefuText` 把 markdown 扁平成 kefu `content` 能识别的纯文本(保留代码块/链接/列表项标识,剔除标题/粗体/HTML 等)。
+- **[会话自动路由] Source Registry 扩展** 🔁 `WecomSourcePlane` 新增 `"kefu"`,入向会记录 `kefuOpenKfId`;下一轮 Agent 主动回复时会自动走客服出向,不会误发到 Agent 内部私信。显式目标 `wecom-kefu:<accountId>:<openKfId>:<externalUserId>` 同样支持。
 
 #### 📌 v2.7.3(2026-04-21)
 - **[格式升级] 全线切换到 `markdown_v2`** 🎨 自建应用(Agent API) / 群机器人(Bot WS) / 主动回复(Bot Webhook response_url)全部改用企微 2026 年新的 `markdown_v2` 消息类型,**原生支持 markdown 表格、图片 `![](url)`、粗体、链接、代码块、嵌套引用、列表**,消息上限从 2048 字节提到 4096 字节。

@@ -2,9 +2,27 @@ import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 import type { WecomMediaService } from "../shared/media-service.js";
 import type { UnifiedInboundEvent } from "../types/index.js";
 import { getPeerContextToken } from "../context-store.js";
-import { buildWecomContextTarget } from "../target.js";
+import { buildWecomContextTarget, buildWecomKefuTarget } from "../target.js";
 import { resolveRuntimeRoute } from "./routing-bridge.js";
 import { registerWecomSourceSnapshot } from "./source-registry.js";
+
+function extractKefuOpenKfId(event: UnifiedInboundEvent): string | undefined {
+  if (event.transport !== "kefu") return undefined;
+  const body = event.raw?.body;
+  if (!body || typeof body !== "object") return undefined;
+  const rec = body as Record<string, unknown>;
+  const candidates = [rec.open_kfid, rec.openKfId];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  const eventObj = rec.event;
+  if (eventObj && typeof eventObj === "object") {
+    const eventRec = eventObj as Record<string, unknown>;
+    const nested = eventRec.open_kfid;
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+  return undefined;
+}
 
 export type PreparedSession = {
   route: ReturnType<typeof resolveRuntimeRoute>;
@@ -30,7 +48,10 @@ export async function prepareInboundSession(params: {
       ? "bot-ws"
       : event.transport === "agent-callback"
         ? "agent-callback"
-        : undefined;
+        : event.transport === "kefu"
+          ? "kefu"
+          : undefined;
+  const kefuOpenKfId = extractKefuOpenKfId(event);
   if (source) {
     registerWecomSourceSnapshot({
       accountId: event.accountId,
@@ -39,6 +60,7 @@ export async function prepareInboundSession(params: {
       sessionKey: route.sessionKey,
       peerKind: event.conversation.peerKind,
       peerId: event.conversation.peerId,
+      kefuOpenKfId,
     });
   }
   const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
@@ -69,9 +91,17 @@ export async function prepareInboundSession(params: {
     event.transport === "bot-ws"
       ? getPeerContextToken(event.accountId, event.conversation.peerId)
       : undefined;
-  const originatingTo = contextToken
-    ? buildWecomContextTarget(contextToken)
-    : defaultOriginatingTo;
+  const kefuOriginatingTo =
+    event.transport === "kefu" && kefuOpenKfId
+      ? buildWecomKefuTarget({
+          accountId: event.accountId,
+          openKfId: kefuOpenKfId,
+          externalUserId: event.conversation.peerId,
+        })
+      : undefined;
+  const originatingTo =
+    kefuOriginatingTo ??
+    (contextToken ? buildWecomContextTarget(contextToken) : defaultOriginatingTo);
   const providerContext =
     event.transport === "bot-ws"
       ? {
@@ -125,6 +155,7 @@ export async function prepareInboundSession(params: {
       sessionId: readContextSessionId(ctx),
       peerKind: event.conversation.peerKind,
       peerId: event.conversation.peerId,
+      kefuOpenKfId,
     });
   }
 

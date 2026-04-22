@@ -65,6 +65,12 @@ describe("resolveDerivedPathSummary", () => {
         "/plugins/wecom/agent",
         "/wecom/agent",
       ],
+      kefu: [
+        "/plugins/wecom/kefu/default",
+        "/wecom/kefu/default",
+        "/plugins/wecom/kefu",
+        "/wecom/kefu",
+      ],
     });
   });
 });

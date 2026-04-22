@@ -91,12 +91,35 @@ export type WecomDynamicAgentsConfig = {
   adminUsers?: string[];
 };
 
+export type WecomKefuWebhookConfig = {
+  token: string;
+  encodingAESKey: string;
+};
+
+/**
+ * 微信客服（WeCom Kefu）账号配置
+ * 对应企业微信"微信客服"产品，用于对接外部微信用户咨询。
+ *
+ * access_token 复用企业应用（Agent API）：需要 corpId + corpSecret。
+ * 允许独立配置（不强依赖同账号下的 agent 段）。
+ */
+export type WecomKefuConfig = {
+  corpId: string;
+  corpSecret: string;
+  /** 绑定的客服账号 openKfId 列表；允许单账号绑多个客服账号分流 */
+  openKfIds: string[];
+  webhook: WecomKefuWebhookConfig;
+  welcomeText?: string;
+  dm?: WecomDmConfig;
+};
+
 export type WecomAccountConfig = {
   enabled?: boolean;
   name?: string;
   mediaMaxMb?: number;
   bot?: WecomBotConfig;
   agent?: WecomAgentConfig;
+  kefu?: WecomKefuConfig;
 };
 
 export type WecomConfig = {
@@ -105,6 +128,7 @@ export type WecomConfig = {
   mediaDownloadTimeoutMs?: number;
   bot?: WecomBotConfig;
   agent?: WecomAgentConfig;
+  kefu?: WecomKefuConfig;
   accounts?: Record<string, WecomAccountConfig>;
   defaultAccount?: string;
   media?: WecomMediaConfig;

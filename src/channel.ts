@@ -37,6 +37,9 @@ function resolveAccountInboundPath(account: ResolvedWecomAccount): string | unde
   if (account.agent?.callbackConfigured) {
     return derivedPaths.agentCallback[0];
   }
+  if (account.kefu?.callbackConfigured) {
+    return derivedPaths.kefu[0];
+  }
   return undefined;
 }
 
@@ -92,7 +95,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
         cfg: cfg as OpenClawConfig,
         sectionKey: "wecom",
         accountId,
-        clearBaseFields: ["bot", "agent"],
+        clearBaseFields: ["bot", "agent", "kefu"],
       }),
     isConfigured: (account, cfg) => {
       if (!account.configured) {

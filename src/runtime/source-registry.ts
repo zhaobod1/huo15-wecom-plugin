@@ -1,4 +1,4 @@
-export type WecomSourcePlane = "bot-ws" | "agent-callback";
+export type WecomSourcePlane = "bot-ws" | "agent-callback" | "kefu";
 
 export type WecomSourceSnapshot = {
   accountId: string;
@@ -10,6 +10,7 @@ export type WecomSourceSnapshot = {
   peerKind?: "direct" | "group";
   peerId?: string;
   upstreamCorpId?: string;
+  kefuOpenKfId?: string;
 };
 
 const MAX_MESSAGE_FACTS = 2048;
@@ -118,6 +119,7 @@ export function registerWecomSourceSnapshot(params: {
   peerKind?: "direct" | "group" | null;
   peerId?: string | null;
   upstreamCorpId?: string | null;
+  kefuOpenKfId?: string | null;
 }): void {
   const accountId = normalizeOptional(params.accountId);
   if (!accountId) return;
@@ -139,6 +141,9 @@ export function registerWecomSourceSnapshot(params: {
     ...(normalizePeerId(params.peerId) ? { peerId: normalizePeerId(params.peerId) } : {}),
     ...(normalizeOptional(params.upstreamCorpId)
       ? { upstreamCorpId: normalizeOptional(params.upstreamCorpId) }
+      : {}),
+    ...(normalizeOptional(params.kefuOpenKfId)
+      ? { kefuOpenKfId: normalizeOptional(params.kefuOpenKfId) }
       : {}),
   };
 
@@ -246,4 +251,14 @@ export function isWecomAgentSource(params: {
   peerId?: string | null;
 }): boolean {
   return resolveWecomSourceSnapshot(params)?.source === "agent-callback";
+}
+
+export function isWecomKefuSource(params: {
+  accountId?: string | null;
+  sessionKey?: string | null;
+  sessionId?: string | null;
+  peerKind?: "direct" | "group" | null;
+  peerId?: string | null;
+}): boolean {
+  return resolveWecomSourceSnapshot(params)?.source === "kefu";
 }

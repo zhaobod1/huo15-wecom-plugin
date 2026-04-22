@@ -3,10 +3,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
 
 import { handleAgentCallbackRequest } from "../agent-callback/request-handler.js";
+import { handleKefuCallbackRequest } from "../kefu/request-handler.js";
 import type { WecomWebhookTarget } from "../../types/runtime-context.js";
-import { getAgentWebhookTargets, getWecomWebhookTargets, hasMatrixExplicitRoutesRegistered } from "./registry.js";
+import {
+  getAgentWebhookTargets,
+  getKefuWebhookTargets,
+  getWecomWebhookTargets,
+  hasMatrixExplicitRoutesRegistered,
+} from "./registry.js";
 import {
   isAgentCallbackPathCandidate,
+  isKefuCallbackPathCandidate,
   isNonMatrixWecomBasePath,
   logRouteFailure,
   resolvePath,
@@ -66,6 +73,17 @@ export async function handleWecomHttpRequest(params: {
       path,
       reqId,
       targets: agentTargets,
+    });
+  }
+
+  const kefuTargets = getKefuWebhookTargets(path);
+  if (kefuTargets.length > 0 || isKefuCallbackPathCandidate(path)) {
+    return handleKefuCallbackRequest({
+      req,
+      res,
+      path,
+      reqId,
+      targets: kefuTargets,
     });
   }
 

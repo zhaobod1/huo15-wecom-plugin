@@ -2,7 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { getWecomRuntime } from "./runtime.js";
 import { handleWecomHttpRequest } from "./transport/http/request-handler.js";
-import { registerAgentWebhookTarget, registerWecomWebhookTarget } from "./transport/http/registry.js";
+import {
+  registerAgentWebhookTarget,
+  registerKefuWebhookTarget,
+  registerWecomWebhookTarget,
+} from "./transport/http/registry.js";
 import { sendActiveMessage } from "./transport/bot-webhook/active-reply.js";
 import { createBotWebhookRequestHandler } from "./transport/bot-webhook/request-handler.js";
 import {
@@ -88,7 +92,7 @@ const handleBotWebhookRequest = createBotWebhookRequestHandler({
   startAgentForStream,
 });
 
-export { registerAgentWebhookTarget, registerWecomWebhookTarget };
+export { registerAgentWebhookTarget, registerKefuWebhookTarget, registerWecomWebhookTarget };
 export { sendActiveMessage, shouldProcessBotInboundMessage };
 export type { BotInboundProcessDecision };
 

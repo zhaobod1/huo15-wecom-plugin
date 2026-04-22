@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type {
   ResolvedAgentAccount,
   ResolvedBotAccount,
+  ResolvedKefuAccount,
   ResolvedMode,
   ResolvedWecomAccount,
   ResolvedWecomAccounts,
@@ -10,13 +11,14 @@ import type {
   WecomAgentConfig,
   WecomBotConfig,
   WecomConfig,
+  WecomKefuConfig,
   WecomNetworkConfig,
 } from "../types/index.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
 export type WecomAccountConflict = {
-  type: "duplicate_bot_id" | "duplicate_agent_id";
+  type: "duplicate_bot_id" | "duplicate_agent_id" | "duplicate_kefu_id";
   accountId: string;
   ownerAccountId: string;
   message: string;
@@ -90,6 +92,31 @@ function resolveAgentAccount(
   };
 }
 
+function resolveKefuAccount(
+  accountId: string,
+  config: WecomKefuConfig,
+  network?: WecomNetworkConfig,
+): ResolvedKefuAccount {
+  const openKfIds = (config.openKfIds ?? [])
+    .map((id) => String(id ?? "").trim())
+    .filter(Boolean);
+  const callbackConfigured = Boolean(config.webhook?.token && config.webhook?.encodingAESKey);
+  const apiConfigured = Boolean(config.corpId?.trim() && config.corpSecret?.trim());
+  return {
+    accountId,
+    configured: (callbackConfigured || apiConfigured) && openKfIds.length > 0,
+    callbackConfigured,
+    apiConfigured,
+    corpId: config.corpId?.trim() ?? "",
+    corpSecret: config.corpSecret?.trim() ?? "",
+    openKfIds,
+    token: config.webhook?.token ?? "",
+    encodingAESKey: config.webhook?.encodingAESKey ?? "",
+    config,
+    network,
+  };
+}
+
 function toResolvedAccount(params: {
   accountId: string;
   enabled: boolean;
@@ -103,14 +130,18 @@ function toResolvedAccount(params: {
   const agent = params.config.agent
     ? resolveAgentAccount(params.accountId, params.config.agent, params.network)
     : undefined;
+  const kefu = params.config.kefu
+    ? resolveKefuAccount(params.accountId, params.config.kefu, params.network)
+    : undefined;
   return {
     accountId: params.accountId,
     name: params.name,
     enabled: params.enabled,
-    configured: Boolean(bot?.configured || agent?.configured),
+    configured: Boolean(bot?.configured || agent?.configured || kefu?.configured),
     config: params.config,
     bot,
     agent,
+    kefu,
   };
 }
 
@@ -128,7 +159,7 @@ export function detectMode(config: WecomConfig | undefined): ResolvedMode {
   if (config.accounts && Object.keys(config.accounts).length > 0) {
     return "matrix";
   }
-  if (config.bot || config.agent) {
+  if (config.bot || config.agent || config.kefu) {
     return "legacy";
   }
   return "disabled";
@@ -154,6 +185,7 @@ function resolveLegacyAccounts(wecom: WecomConfig): Record<string, ResolvedWecom
   const config: WecomAccountConfig = {
     bot: wecom.bot,
     agent: wecom.agent,
+    kefu: wecom.kefu,
   };
   return {
     [DEFAULT_ACCOUNT_ID]: toResolvedAccount({
@@ -174,6 +206,7 @@ function collectWecomAccountConflicts(cfg: OpenClawConfig): Map<string, WecomAcc
   const conflicts = new Map<string, WecomAccountConflict>();
   const botOwners = new Map<string, string>();
   const agentOwners = new Map<string, string>();
+  const kefuOwners = new Map<string, string>();
 
   for (const accountId of Object.keys(resolved.accounts).sort((a, b) => a.localeCompare(b))) {
     const account = resolved.accounts[accountId];
@@ -213,6 +246,25 @@ function collectWecomAccountConflicts(cfg: OpenClawConfig): Map<string, WecomAcc
         });
       } else {
         agentOwners.set(key, accountId);
+      }
+    }
+
+    for (const rawKfId of account.kefu?.openKfIds ?? []) {
+      const kfId = rawKfId.trim();
+      if (!kfId) continue;
+      const key = normalizeKey(kfId);
+      const owner = kefuOwners.get(key);
+      if (owner && owner !== accountId) {
+        conflicts.set(accountId, {
+          type: "duplicate_kefu_id",
+          accountId,
+          ownerAccountId: owner,
+          message:
+            `Duplicate WeCom kefu openKfId: account "${accountId}" shares openKfId "${kfId}" with account "${owner}". ` +
+            "Keep one owner account per openKfId.",
+        });
+      } else {
+        kefuOwners.set(key, accountId);
       }
     }
   }
@@ -262,6 +314,7 @@ export function resolveWecomAccounts(cfg: OpenClawConfig): ResolvedWecomAccounts
     accounts,
     bot: accounts[defaultAccountId]?.bot,
     agent: accounts[defaultAccountId]?.agent,
+    kefu: accounts[defaultAccountId]?.kefu,
   };
 }
 

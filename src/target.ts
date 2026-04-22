@@ -18,12 +18,52 @@ export interface WecomTarget {
     toparty?: string;
     totag?: string;
     chatid?: string;
+    kefu?: {
+        openKfId: string;
+        externalUserId: string;
+    };
 }
 
 export interface ScopedWecomTarget {
     accountId?: string;
     target: WecomTarget;
     rawTarget: string;
+}
+
+/**
+ * Parse a `wecom-kefu:<accountId>:<openKfId>:<externalUserId>` or
+ * `wecom-kefu:<openKfId>:<externalUserId>` target into its components.
+ */
+export function parseKefuScopedTarget(raw: string): {
+    accountId?: string;
+    openKfId: string;
+    externalUserId: string;
+} | undefined {
+    const trimmed = raw.trim();
+    if (!/^wecom-kefu:/i.test(trimmed)) return undefined;
+    const rest = trimmed.replace(/^wecom-kefu:/i, "");
+    const parts = rest.split(":");
+    if (parts.length < 2) return undefined;
+    if (parts.length >= 3) {
+        const [accountId, openKfId, ...tail] = parts;
+        const externalUserId = tail.join(":").trim();
+        const openKfIdTrimmed = (openKfId ?? "").trim();
+        const accountIdTrimmed = (accountId ?? "").trim();
+        if (!openKfIdTrimmed || !externalUserId) return undefined;
+        return {
+            accountId: accountIdTrimmed || undefined,
+            openKfId: openKfIdTrimmed,
+            externalUserId,
+        };
+    }
+    const [openKfId, ...tail] = parts;
+    const externalUserId = tail.join(":").trim();
+    const openKfIdTrimmed = (openKfId ?? "").trim();
+    if (!openKfIdTrimmed || !externalUserId) return undefined;
+    return {
+        openKfId: openKfIdTrimmed,
+        externalUserId,
+    };
 }
 
 function parseUpstreamScopedTarget(raw: string): {
@@ -57,6 +97,18 @@ function parseUpstreamScopedTarget(raw: string): {
 
 export function buildWecomContextTarget(contextToken: string): string {
     return `wecom:context:${contextToken}`;
+}
+
+export function buildWecomKefuTarget(params: {
+    accountId?: string;
+    openKfId: string;
+    externalUserId: string;
+}): string {
+    const account = params.accountId?.trim();
+    if (account) {
+        return `wecom-kefu:${account}:${params.openKfId}:${params.externalUserId}`;
+    }
+    return `wecom-kefu:${params.openKfId}:${params.externalUserId}`;
 }
 
 export function resolveWecomContextTarget(raw: string | undefined): { contextToken: string } | undefined {
@@ -147,6 +199,22 @@ export function resolveScopedWecomTarget(raw: string | undefined, defaultAccount
     if (!raw?.trim()) return undefined;
 
     const trimmed = raw.trim();
+
+    const kefuScoped = parseKefuScopedTarget(trimmed);
+    if (kefuScoped) {
+        const accountId = kefuScoped.accountId || defaultAccountId;
+        return {
+            accountId,
+            target: {
+                touser: kefuScoped.externalUserId,
+                kefu: {
+                    openKfId: kefuScoped.openKfId,
+                    externalUserId: kefuScoped.externalUserId,
+                },
+            },
+            rawTarget: `${kefuScoped.openKfId}:${kefuScoped.externalUserId}`,
+        };
+    }
 
     const upstreamScoped = parseUpstreamScopedTarget(trimmed);
     if (upstreamScoped) {

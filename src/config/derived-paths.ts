@@ -4,7 +4,7 @@ import { WEBHOOK_PATHS } from "../types/constants.js";
 
 export function resolveDerivedPath(params: {
   accountId: string;
-  transport: Extract<WecomTransportKind, "bot-webhook" | "agent-callback">;
+  transport: Extract<WecomTransportKind, "bot-webhook" | "agent-callback" | "kefu">;
   includeLegacy?: boolean;
 }): string[] {
   const accountId = params.accountId.trim() || DEFAULT_ACCOUNT_ID;
@@ -20,6 +20,16 @@ export function resolveDerivedPath(params: {
         ]
       : [`${WEBHOOK_PATHS.BOT_PLUGIN}/${accountId}`];
   }
+  if (params.transport === "kefu") {
+    return isDefault
+      ? [
+          `${WEBHOOK_PATHS.KEFU_PLUGIN}/${accountId}`,
+          `${WEBHOOK_PATHS.KEFU}/${accountId}`,
+          WEBHOOK_PATHS.KEFU_PLUGIN,
+          WEBHOOK_PATHS.KEFU,
+        ]
+      : [`${WEBHOOK_PATHS.KEFU_PLUGIN}/${accountId}`];
+  }
   return isDefault
     ? [
         `${WEBHOOK_PATHS.AGENT_PLUGIN}/${accountId}`,
@@ -33,9 +43,11 @@ export function resolveDerivedPath(params: {
 export function resolveDerivedPathSummary(accountId: string): {
   botWebhook: string[];
   agentCallback: string[];
+  kefu: string[];
 } {
   return {
     botWebhook: resolveDerivedPath({ accountId, transport: "bot-webhook" }),
     agentCallback: resolveDerivedPath({ accountId, transport: "agent-callback" }),
+    kefu: resolveDerivedPath({ accountId, transport: "kefu" }),
   };
 }

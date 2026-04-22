@@ -55,6 +55,20 @@ export interface AgentConfig {
   dm?: DmConfig;
 }
 
+export interface KefuWebhookConfig {
+  token: string;
+  encodingAESKey: string;
+}
+
+export interface KefuConfig {
+  corpId: string;
+  corpSecret: string;
+  openKfIds: string[];
+  webhook: KefuWebhookConfig;
+  welcomeText?: string;
+  dm?: DmConfig;
+}
+
 export interface DynamicAgentsConfig {
   enabled?: boolean;
   dmCreateAgent?: boolean;
@@ -68,6 +82,7 @@ export interface AccountConfig {
   mediaMaxMb?: number;
   bot?: BotConfig;
   agent?: AgentConfig;
+  kefu?: KefuConfig;
 }
 
 export interface WecomConfigInput {
@@ -76,6 +91,7 @@ export interface WecomConfigInput {
   mediaDownloadTimeoutMs?: number;
   bot?: BotConfig;
   agent?: AgentConfig;
+  kefu?: KefuConfig;
   accounts?: Record<string, AccountConfig>;
   defaultAccount?: string;
   media?: MediaConfig;

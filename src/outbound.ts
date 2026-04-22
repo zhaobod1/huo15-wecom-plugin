@@ -14,9 +14,15 @@ import {
   getWecomRuntime,
 } from "./runtime.js";
 import { resolveWecomSourceSnapshot } from "./runtime/source-registry.js";
-import { resolveScopedWecomTarget } from "./target.js";
+import { parseKefuScopedTarget, resolveScopedWecomTarget } from "./target.js";
+import {
+  deliverKefuMediaUrl,
+  deliverKefuText,
+  type KefuDeliveryTarget,
+} from "./transport/kefu/outbound.js";
 import { extractMarkdownImages } from "./wecom_msg_adapter/image_extractor.js";
 import { loadImageAsPayload } from "./wecom_msg_adapter/image_fetcher.js";
+import { toKefuText } from "./wecom_msg_adapter/kefu_text_adapter.js";
 import { toWeComMarkdownV2 } from "./wecom_msg_adapter/markdown_adapter.js";
 
 type WecomOutboundBaseContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
@@ -78,6 +84,120 @@ function resolveAgentConfigOrThrow(params: {
 function isExplicitAgentTarget(raw: string | undefined): boolean {
   return /^wecom-agent:/i.test(String(raw ?? "").trim());
 }
+
+function isExplicitKefuTarget(raw: string | undefined): boolean {
+  return /^wecom-kefu:/i.test(String(raw ?? "").trim());
+}
+
+function resolveKefuDeliveryTarget(params: {
+  cfg: WecomOutboundConfig;
+  accountId?: string | null;
+  to: string | undefined;
+  sessionKey?: string | null;
+}): { target: KefuDeliveryTarget; accountId: string } | undefined {
+  const explicit = params.to ? parseKefuScopedTarget(params.to) : undefined;
+  const explicitAccountId = explicit?.accountId?.trim();
+  const account = resolveOutboundAccountOrThrow({
+    cfg: params.cfg,
+    accountId: explicitAccountId || params.accountId,
+  });
+  if (!account.kefu?.apiConfigured) {
+    if (explicit) {
+      throw new Error(
+        `WeCom outbound account="${account.accountId}" is missing kefu credentials (corpId + corpSecret).`,
+      );
+    }
+    return undefined;
+  }
+  if (explicit) {
+    return {
+      accountId: account.accountId,
+      target: {
+        kefu: account.kefu,
+        openKfId: explicit.openKfId,
+        externalUserId: explicit.externalUserId,
+      },
+    };
+  }
+  const scoped = resolveScopedWecomTarget(params.to, account.accountId);
+  const externalUserId = scoped?.target.touser?.trim() || scoped?.target.kefu?.externalUserId?.trim();
+  if (!externalUserId) return undefined;
+  const snapshot = resolveWecomSourceSnapshot({
+    accountId: account.accountId,
+    sessionKey: params.sessionKey,
+    peerKind: "direct",
+    peerId: externalUserId,
+  });
+  if (snapshot?.source !== "kefu" || !snapshot.kefuOpenKfId) return undefined;
+  return {
+    accountId: account.accountId,
+    target: {
+      kefu: account.kefu,
+      openKfId: snapshot.kefuOpenKfId,
+      externalUserId,
+    },
+  };
+}
+
+async function sendTextViaKefu(params: {
+  cfg: WecomOutboundConfig;
+  accountId?: string | null;
+  to: string | undefined;
+  text: string;
+  sessionKey?: string | null;
+}): Promise<boolean> {
+  if (isExplicitAgentTarget(params.to)) return false;
+  const resolved = resolveKefuDeliveryTarget(params);
+  if (!resolved) return false;
+  const { images, residualText } = extractMarkdownImages(params.text);
+  let textToSend = residualText;
+  for (const image of images) {
+    try {
+      await deliverKefuMediaUrl(resolved.target, image.url);
+      getAccountRuntime(resolved.accountId)?.log.info?.(
+        `[wecom-outbound] Sent kefu inline image to openKfId=${resolved.target.openKfId} externalUserId=${resolved.target.externalUserId} src=${image.url}`,
+      );
+    } catch (err) {
+      getAccountRuntime(resolved.accountId)?.log.warn?.(
+        `[wecom-outbound] kefu inline image failed (src=${image.url}): ${err instanceof Error ? err.message : String(err)}, embedding back into text`,
+      );
+      textToSend = textToSend
+        ? `${textToSend}\n\n![${image.alt}](${image.url})`
+        : `![${image.alt}](${image.url})`;
+    }
+  }
+  const plain = toKefuText(textToSend);
+  if (plain.trim()) {
+    await deliverKefuText(resolved.target, plain);
+    getAccountRuntime(resolved.accountId)?.log.info?.(
+      `[wecom-outbound] Sent kefu text to openKfId=${resolved.target.openKfId} externalUserId=${resolved.target.externalUserId} (len=${plain.length})`,
+    );
+  } else if (images.length === 0) {
+    getAccountRuntime(resolved.accountId)?.log.info?.(
+      `[wecom-outbound] Empty kefu message to openKfId=${resolved.target.openKfId}, skipped`,
+    );
+    return false;
+  }
+  return true;
+}
+
+async function sendMediaViaKefu(params: {
+  cfg: WecomOutboundConfig;
+  accountId?: string | null;
+  to: string | undefined;
+  mediaUrl: string;
+  sessionKey?: string | null;
+}): Promise<boolean> {
+  if (isExplicitAgentTarget(params.to)) return false;
+  const resolved = resolveKefuDeliveryTarget(params);
+  if (!resolved) return false;
+  await deliverKefuMediaUrl(resolved.target, params.mediaUrl);
+  getAccountRuntime(resolved.accountId)?.log.info?.(
+    `[wecom-outbound] Sent kefu media to openKfId=${resolved.target.openKfId} externalUserId=${resolved.target.externalUserId} url=${params.mediaUrl}`,
+  );
+  return true;
+}
+
 
 function resolveBotWsChatTarget(params: {
   to: string | undefined;
@@ -365,17 +485,27 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     }
 
     let sentViaBotWs = false;
+    let sentViaKefu = false;
     let agent: ReturnType<typeof resolveAgentConfigOrThrow> | null = null;
 
     try {
-      sentViaBotWs = await sendTextViaBotWs({
+      sentViaKefu = await sendTextViaKefu({
         cfg,
         accountId,
         to,
         text: outgoingText,
         sessionKey,
       });
-      if (!sentViaBotWs) {
+      if (!sentViaKefu) {
+        sentViaBotWs = await sendTextViaBotWs({
+          cfg,
+          accountId,
+          to,
+          text: outgoingText,
+          sessionKey,
+        });
+      }
+      if (!sentViaKefu && !sentViaBotWs) {
         // Defer Agent resolution until needed for fallback
         agent = resolveAgentConfigOrThrow({ cfg, accountId });
         getAccountRuntime(agent.accountId)?.log.info?.(
@@ -441,9 +571,10 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       throw err;
     }
 
+    const transport = sentViaKefu ? "kefu" : sentViaBotWs ? "bot-ws" : "agent";
     return {
       channel: "wecom",
-      messageId: `${sentViaBotWs ? "bot-ws" : "agent"}-${Date.now()}`,
+      messageId: `${transport}-${Date.now()}`,
       timestamp: Date.now(),
     };
   },
@@ -459,6 +590,21 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     // signal removed - not supported in current SDK
     if (!mediaUrl) {
       throw new Error("WeCom outbound requires mediaUrl.");
+    }
+
+    const sentViaKefu = await sendMediaViaKefu({
+      cfg,
+      accountId,
+      to,
+      mediaUrl,
+      sessionKey,
+    });
+    if (sentViaKefu) {
+      return {
+        channel: "wecom",
+        messageId: `kefu-media-${Date.now()}`,
+        timestamp: Date.now(),
+      };
     }
 
     const botWs = await sendMediaViaBotWs({

@@ -2,8 +2,13 @@ import type { PluginRuntime } from "openclaw/plugin-sdk";
 
 import type { ResolvedAgentAccount, ResolvedBotAccount, ResolvedWecomAccount } from "./account.js";
 
-export type WecomCapabilityKind = "bot" | "agent";
-export type WecomTransportKind = "bot-ws" | "bot-webhook" | "agent-callback" | "agent-api";
+export type WecomCapabilityKind = "bot" | "agent" | "kefu";
+export type WecomTransportKind =
+  | "bot-ws"
+  | "bot-webhook"
+  | "agent-callback"
+  | "agent-api"
+  | "kefu";
 export type WecomAuditCategory =
   | "inbound"
   | "duplicate-inbound"
@@ -25,7 +30,11 @@ export type WecomInboundKind =
   | "link"
   | "event"
   | "welcome"
-  | "template-card-event";
+  | "template-card-event"
+  | "miniprogram"
+  | "menu"
+  | "business-card"
+  | "kefu-session-event";
 
 export type ConversationRef = {
   accountId: string;

@@ -3,6 +3,7 @@ import type {
   WecomAgentConfig,
   WecomBotConfig,
   WecomBotPrimaryTransport,
+  WecomKefuConfig,
   WecomNetworkConfig,
 } from "./config.js";
 
@@ -51,6 +52,20 @@ export type ResolvedAgentAccount = {
   network?: WecomNetworkConfig;
 };
 
+export type ResolvedKefuAccount = {
+  accountId: string;
+  configured: boolean;
+  callbackConfigured: boolean;
+  apiConfigured: boolean;
+  corpId: string;
+  corpSecret: string;
+  openKfIds: string[];
+  token: string;
+  encodingAESKey: string;
+  config: WecomKefuConfig;
+  network?: WecomNetworkConfig;
+};
+
 export type ResolvedWecomAccount = {
   accountId: string;
   name?: string;
@@ -59,6 +74,7 @@ export type ResolvedWecomAccount = {
   config: WecomAccountConfig;
   bot?: ResolvedBotAccount;
   agent?: ResolvedAgentAccount;
+  kefu?: ResolvedKefuAccount;
 };
 
 export type ResolvedWecomAccounts = {
@@ -67,4 +83,5 @@ export type ResolvedWecomAccounts = {
   accounts: Record<string, ResolvedWecomAccount>;
   bot?: ResolvedBotAccount;
   agent?: ResolvedAgentAccount;
+  kefu?: ResolvedKefuAccount;
 };

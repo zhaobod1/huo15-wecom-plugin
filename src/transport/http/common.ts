@@ -39,13 +39,24 @@ export function isAgentCallbackPathCandidate(path: string): boolean {
   );
 }
 
+export function isKefuCallbackPathCandidate(path: string): boolean {
+  return (
+    path === WEBHOOK_PATHS.KEFU ||
+    path === WEBHOOK_PATHS.KEFU_PLUGIN ||
+    path.startsWith(`${WEBHOOK_PATHS.KEFU}/`) ||
+    path.startsWith(`${WEBHOOK_PATHS.KEFU_PLUGIN}/`)
+  );
+}
+
 export function isNonMatrixWecomBasePath(path: string): boolean {
   return (
     path === WEBHOOK_PATHS.BOT ||
     path === WEBHOOK_PATHS.BOT_ALT ||
     path === WEBHOOK_PATHS.AGENT ||
+    path === WEBHOOK_PATHS.KEFU ||
     path === WEBHOOK_PATHS.BOT_PLUGIN ||
-    path === WEBHOOK_PATHS.AGENT_PLUGIN
+    path === WEBHOOK_PATHS.AGENT_PLUGIN ||
+    path === WEBHOOK_PATHS.KEFU_PLUGIN
   );
 }
 

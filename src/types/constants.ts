@@ -2,8 +2,10 @@ export const WEBHOOK_PATHS = {
   BOT: "/wecom/bot",
   BOT_ALT: "/wecom",
   AGENT: "/wecom/agent",
+  KEFU: "/wecom/kefu",
   BOT_PLUGIN: "/plugins/wecom/bot",
   AGENT_PLUGIN: "/plugins/wecom/agent",
+  KEFU_PLUGIN: "/plugins/wecom/kefu",
 } as const;
 
 export const API_ENDPOINTS = {
@@ -12,6 +14,10 @@ export const API_ENDPOINTS = {
   SEND_APPCHAT: "https://qyapi.weixin.qq.com/cgi-bin/appchat/send",
   UPLOAD_MEDIA: "https://qyapi.weixin.qq.com/cgi-bin/media/upload",
   DOWNLOAD_MEDIA: "https://qyapi.weixin.qq.com/cgi-bin/media/get",
+  KEFU_SYNC_MSG: "https://qyapi.weixin.qq.com/cgi-bin/kf/sync_msg",
+  KEFU_SEND_MSG: "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg",
+  KEFU_ACCOUNT_LIST: "https://qyapi.weixin.qq.com/cgi-bin/kf/account/list",
+  KEFU_UPLOAD_MEDIA: "https://qyapi.weixin.qq.com/cgi-bin/media/upload",
 } as const;
 
 export const LIMITS = {
