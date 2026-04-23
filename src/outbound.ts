@@ -31,6 +31,51 @@ type WecomOutboundContext = WecomOutboundBaseContext & {
 };
 type WecomOutboundConfig = WecomOutboundContext["cfg"];
 
+/**
+ * 图片下发失败时的纯文字占位。
+ *
+ * 为什么不把原 URL 内联回 markdown：Agent 回复里常见的 `![](cos_url)` 是**短 TTL 的预签名 URL**
+ * （Tencent COS / 阿里 OSS 等），插件这侧 fetch 拉不动时，把同一 URL 发给企微客户端，
+ * 客户端同样会失败，只会让用户看到"COS链接已过期 / 图片打不开"。
+ *
+ * 纯文字占位更诚实，用户能判断出是哪张图丢了，并能要求重新生成。
+ */
+export function buildImageFailurePlaceholder(alt: string, reason?: string): string {
+  const label = alt?.trim() || "图片";
+  const reasonSuffix = reason ? `（${summarizeImageFailure(reason)}）` : "";
+  return `⚠️ 图片发送失败：${label}${reasonSuffix}`;
+}
+
+function summarizeImageFailure(reason: string): string {
+  const msg = reason.trim();
+  if (!msg) return "未知错误";
+  // 常见预签名过期错误里会带 "expired" / "403" / "SignatureDoesNotMatch" —— 归一成一句提示。
+  if (/expired|403|SignatureDoesNotMatch/i.test(msg)) return "下载链接已过期，请重试";
+  if (/timeout|ETIMEDOUT|AbortError/i.test(msg)) return "下载超时，请重试";
+  if (/exceeds max|超过/i.test(msg)) return "超出大小限制";
+  // 兜底时截断，避免把多行 stack 塞进用户可见的文本里
+  const short = msg.split(/\r?\n/)[0].slice(0, 80);
+  return short || "未知错误";
+}
+
+/**
+ * 发送前最后一道兜底：如果 residualText 里仍然残留 `![...](...)` 语法，
+ * 说明上一轮 `extractMarkdownImages` 正则漏掉了（URL 含 `)`、换行打断等边缘场景）。
+ *
+ * 漏网的原因我们已经知道：插件侧都没能 upload，那等这段 markdown 被发到企微客户端时，
+ * 客户端同样拉不动那条 URL，最终用户看到的只有 "COS 链接已过期"。
+ *
+ * 这里兜底把所有残留的 `![alt](whatever)` 统一替换成明文占位，行为与上层 upload 失败时一致。
+ * 用更宽松的正则（不限制 URL 内的 `)` / `\s`），宁可误伤也不放行。
+ */
+export function sanitizeResidualImageMarkdown(text: string): string {
+  if (!text) return text;
+  return text.replace(/!\[([^\]\n]*)\]\(([^\n]*?)\)/g, (_full, altRaw: string) => {
+    const alt = String(altRaw ?? "").trim() || "图片";
+    return buildImageFailurePlaceholder(alt);
+  });
+}
+
 function resolveOutboundAccountOrThrow(params: {
   cfg: WecomOutboundConfig;
   accountId?: string | null;
@@ -331,6 +376,7 @@ async function sendTextViaBotWs(params: {
   let textToSend = residualText;
 
   for (const image of images) {
+    let failureReason: string | undefined;
     try {
       const result = await handle.sendMedia({
         chatId,
@@ -344,22 +390,27 @@ async function sendTextViaBotWs(params: {
         );
         continue;
       }
-      const reason = result.rejectReason || result.error || "unknown";
+      failureReason = result.rejectReason || result.error || "unknown";
       console.warn(
-        `[wecom-outbound] Bot WS inline image failed (src=${image.url}): ${reason}, embedding back into markdown`,
+        `[wecom-outbound] Bot WS inline image failed (src=${image.url}): ${failureReason}`,
       );
     } catch (imgErr) {
+      failureReason = imgErr instanceof Error ? imgErr.message : String(imgErr);
       console.warn(
-        `[wecom-outbound] Bot WS inline image threw (src=${image.url}): ${imgErr instanceof Error ? imgErr.message : String(imgErr)}, embedding back into markdown`,
+        `[wecom-outbound] Bot WS inline image threw (src=${image.url}): ${failureReason}`,
       );
     }
-    textToSend = textToSend
-      ? `${textToSend}\n\n![${image.alt}](${image.url})`
-      : `![${image.alt}](${image.url})`;
+    // 下载/上传失败时不要把原 URL 再写回 markdown —— 预签名 URL（COS/OSS）插件拉不动，
+    // 企微客户端同样拉不动，只会让用户看到 "链接已过期"。改用纯文字占位。
+    const placeholder = buildImageFailurePlaceholder(image.alt, failureReason);
+    textToSend = textToSend ? `${textToSend}\n\n${placeholder}` : placeholder;
   }
 
   if (textToSend.trim()) {
-    const markdownText = toWeComMarkdownV2(textToSend);
+    // 兜底：如果 extractMarkdownImages 正则漏了某些 `![](url)`（URL 含 `)` / 换行 / 等），
+    // 发到客户端后只会触发 "链接已过期"。统一替换为占位文本。
+    const sanitized = sanitizeResidualImageMarkdown(textToSend);
+    const markdownText = toWeComMarkdownV2(sanitized);
     console.log(
       `[wecom-outbound] Sending Bot WS active message to target=${String(params.to ?? "")} chatId=${chatId} (len=${markdownText.length})`,
     );
@@ -532,17 +583,20 @@ export const wecomOutbound: ChannelOutboundAdapter = {
               `[wecom-outbound] Sent inline image to ${String(to ?? "")} (src=${image.url}, ${payload.buffer.length}B)`,
             );
           } catch (imgErr) {
+            const failureReason = imgErr instanceof Error ? imgErr.message : String(imgErr);
             console.warn(
-              `[wecom-outbound] Inline image upload failed (src=${image.url}), embedding back into markdown: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
+              `[wecom-outbound] Inline image upload failed (src=${image.url}): ${failureReason}`,
             );
-            textToSend = textToSend
-              ? `${textToSend}\n\n![${image.alt}](${image.url})`
-              : `![${image.alt}](${image.url})`;
+            // 预签名 URL 插件下载失败，企微客户端同样会失败。用纯文字占位，不写回 markdown。
+            const placeholder = buildImageFailurePlaceholder(image.alt, failureReason);
+            textToSend = textToSend ? `${textToSend}\n\n${placeholder}` : placeholder;
           }
         }
 
         // markdown_v2 原生支持表格/链接/标题/粗体/代码块,不再需要 textcard 降级
         const MARKDOWN_PATTERNS = /^#{1,6}\s|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\)|`[^`\n]+`|```|^>\s|^\s*[-*+]\s|\|.*\||!\[[^\]\n]*\]\(/m;
+        // 兜底：同 Bot WS 路径，消除任何漏网的 `![](url)`，避免客户端再去拉不可达 URL。
+        textToSend = sanitizeResidualImageMarkdown(textToSend);
         if (textToSend.trim()) {
           if (MARKDOWN_PATTERNS.test(textToSend)) {
             const markdownText = toWeComMarkdownV2(textToSend);
