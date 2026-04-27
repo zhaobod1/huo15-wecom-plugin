@@ -3,7 +3,13 @@
 <p align="center">
   <a href="https://github.com/yanhaitao/wecom"><img src="https://img.shields.io/badge/Original%20Project-逸寻智库-orange?style=for-the-badge&logo=github" alt="Original Project" /></a>
   <img src="https://img.shields.io/badge/License-ISC-blue?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/Min%20Recommended-2.8.1+-red?style=for-the-badge" alt="Minimum recommended" />
 </p>
+
+> [!CAUTION]
+> **🛡️ 安全公告（2026-04-22）**：受影响版本 `<= 2.8.0`。Agent 在工作区写自定义脚本时可能把 `touser="@all"` 当默认收件人，导致原本私聊的图片/视频/文档**被广播到企业微信应用可见范围全员**。
+>
+> **请所有部署立即升级到 `@huo15/wecom@2.8.1` 或以上**。修复见 [`changelog/v2.8.1.md`](changelog/v2.8.1.md)。
 
 > [!WARNING]
 > **原创声明**:本项目涉及的"多账号隔离与矩阵路由架构"、"Bot+Agent双模融合架构"、"长任务超时接力逻辑"及"全自动媒体流转接"等核心设计均为作者 **YanHaidao** 独立思考与实践的原创成果。
