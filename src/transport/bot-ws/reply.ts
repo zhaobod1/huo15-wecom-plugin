@@ -386,6 +386,21 @@ export function createBotWsReplyHandle(params: {
         }
       } catch (error) {
         if (isTerminalReplyError(error)) {
+          // Ack timeout: try Agent API fallback before giving up.
+          // The WS reqId slot is released after ack timeout, but the
+          // Agent API uses a separate HTTP path so it can still deliver.
+          if (isAckTimeoutError(error) || isInvalidReqIdError(error)) {
+            console.warn(
+              `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying Agent API fallback`,
+            );
+            try {
+              await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
+              params.onDeliver?.();
+              return;
+            } catch (fallbackErr) {
+              // fallback failed too, proceed to onFail
+            }
+          }
           params.onFail?.(error);
           return;
         }
