@@ -79,10 +79,37 @@ export async function prepareInboundSession(params: {
     body: event.text,
   });
 
-  const firstAttachment = await mediaService.normalizeFirstAttachment(event);
-  const mediaPath = firstAttachment
-    ? await mediaService.saveInboundAttachment(event, firstAttachment)
-    : undefined;
+  const totalAttachments = event.attachments?.length ?? 0;
+  // v2.8.8 ⭐ 一条 inbound 只能填一个 ctx.MediaPath，但 mixed/quote 类型可能携带多张图片。
+  // 单图走老路径；多图时一次性下载全部并把首张挂到 MediaPath，其余仅落盘 + 记日志。
+  let mediaPath: string | undefined;
+  let mediaContentType: string | undefined;
+  if (totalAttachments <= 1) {
+    const firstAttachment = await mediaService.normalizeFirstAttachment(event);
+    if (firstAttachment) {
+      mediaPath = await mediaService.saveInboundAttachment(event, firstAttachment);
+      mediaContentType = firstAttachment.contentType;
+    }
+  } else {
+    const all = await mediaService.normalizeAllAttachments(event);
+    if (all.length > 0) {
+      mediaPath = await mediaService.saveInboundAttachment(event, all[0]);
+      mediaContentType = all[0].contentType;
+      const tailPaths: string[] = [];
+      for (let i = 1; i < all.length; i += 1) {
+        try {
+          tailPaths.push(await mediaService.saveInboundAttachment(event, all[i]));
+        } catch (err) {
+          console.warn(
+            `[wecom-session] tail attachment#${i} save failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      console.info(
+        `[wecom-session] inbound has ${totalAttachments} attachments accountId=${event.accountId} transport=${event.transport} messageId=${event.messageId}; ctx.MediaPath=${mediaPath}; tail=${tailPaths.length > 0 ? tailPaths.join("|") : "none"}`,
+      );
+    }
+  }
   const defaultOriginatingTo =
     event.conversation.peerKind === "group"
       ? `wecom:group:${event.conversation.peerId}`
@@ -143,7 +170,7 @@ export async function prepareInboundSession(params: {
     CommandAuthorized: true,
     MediaPath: mediaPath,
     MediaUrl: mediaPath,
-    MediaType: firstAttachment?.contentType,
+    MediaType: mediaContentType,
   });
 
   if (source) {

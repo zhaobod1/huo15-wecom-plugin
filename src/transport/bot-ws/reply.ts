@@ -10,7 +10,7 @@ import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "..
 import { getAccountRuntime, getReplyTransformer, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
 import { toWeComMarkdownV2 } from "../../wecom_msg_adapter/markdown_adapter.js";
-import { uploadAndSendBotWsMedia } from "./media.js";
+import { uploadAndReplyBotWsMedia } from "./media.js";
 import { sendAgentApiText } from "../agent-api/client.js";
 
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
@@ -345,9 +345,13 @@ export function createBotWsReplyHandle(params: {
         const mediaNotes: string[] = [];
         let mediaSent = 0;
         for (const mediaUrl of mediaUrls) {
-          const result = await uploadAndSendBotWsMedia({
+          // v2.8.8 ⭐ Use replyMedia (aibot_respond_msg) instead of sendMediaMessage
+          // (aibot_send_msg). reply.ts is invoked in the context of responding to a
+          // user message; the SDK's replyMedia binds the media to the inbound req_id
+          // so it appears as a contextual reply, not a free-standing active push.
+          const result = await uploadAndReplyBotWsMedia({
             wsClient: params.client,
-            chatId: peerId,
+            frame: params.frame,
             mediaUrl,
             mediaLocalRoots,
             maxBytes: mediaMaxBytes,

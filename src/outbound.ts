@@ -694,14 +694,14 @@ export const wecomOutbound: ChannelOutboundAdapter = {
     const isRemoteUrl = /^https?:\/\//i.test(mediaUrl);
 
     if (isRemoteUrl) {
-      const res = await fetch(mediaUrl, { signal: AbortSignal.timeout(30000) });
-      if (!res.ok) {
-        throw new Error(`Failed to download media: ${res.status}`);
-      }
-      buffer = Buffer.from(await res.arrayBuffer());
-      contentType = res.headers.get("content-type") || "application/octet-stream";
-      const urlPath = new URL(mediaUrl).pathname;
-      filename = urlPath.split("/").pop() || "media";
+      // 不走裸 fetch：复用 fetchRemoteMedia 拿到 SSRF 防护 / redirect / readIdleTimeout，
+      // 并显式带 desktop UA 避免部分 CDN（COS/OSS）拒绝 Node 默认 UA。
+      const fetched = await loadImageAsPayload(mediaUrl, {
+        maxBytes: resolveWecomMediaMaxBytes(cfg, accountId),
+      });
+      buffer = fetched.buffer;
+      contentType = fetched.contentType;
+      filename = fetched.filename;
     } else {
       // 本地文件路径
       const fs = await import("node:fs/promises");

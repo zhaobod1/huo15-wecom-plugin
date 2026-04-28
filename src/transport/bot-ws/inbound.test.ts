@@ -251,7 +251,7 @@ describe("mapBotWsFrameToInboundEvent", () => {
     ]);
   });
 
-  it("extracts first image from quote.mixed in text events", () => {
+  it("extracts all images from quote.mixed in text events", () => {
     const event = mapBotWsFrameToInboundEvent({
       account: createBotAccount(),
       frame: {
@@ -278,12 +278,17 @@ describe("mapBotWsFrameToInboundEvent", () => {
     });
 
     expect(event.inboundKind).toBe("text");
-    // Should only extract first image from quote.mixed
+    // v2.8.8 — quote.mixed 现在提取全部 image/file/video（之前只取首张以"和 webhook 对齐"）
     expect(event.attachments).toEqual([
       {
         name: "image",
         remoteUrl: "https://example.com/mixed-img1.jpg",
         aesKey: "mixed-key-1",
+      },
+      {
+        name: "image",
+        remoteUrl: "https://example.com/mixed-img2.jpg",
+        aesKey: "mixed-key-2",
       },
     ]);
   });

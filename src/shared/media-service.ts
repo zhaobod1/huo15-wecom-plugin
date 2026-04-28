@@ -72,13 +72,52 @@ export class WecomMediaService {
     if (!first?.remoteUrl) {
       return undefined;
     }
+    return this.normalizeOneAttachment(event.accountId, first);
+  }
+
+  /**
+   * v2.8.8 ⭐ 多图支持：把所有 attachments（不仅是首张）解密下载下来。
+   *
+   * 单条消息只能填一个 ctx.MediaPath，所以 session-manager 仍然把首张挂在 MediaPath 上；
+   * 但这里把后续的也保存到 inbound dir，并把 path 记到 event.raw 上方便上层 staging。
+   * 单个失败不阻塞整体，会降级为 undefined 并记录 warn。
+   */
+  async normalizeAllAttachments(
+    event: UnifiedInboundEvent,
+  ): Promise<NormalizedMediaAttachment[]> {
+    const list = event.attachments ?? [];
+    if (list.length === 0) return [];
+    const results: NormalizedMediaAttachment[] = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const attachment = list[i];
+      if (!attachment?.remoteUrl) continue;
+      try {
+        const normalized = await this.normalizeOneAttachment(event.accountId, attachment);
+        if (normalized) results.push(normalized);
+      } catch (err) {
+        console.warn(
+          `[wecom-media] attachment#${i} normalize failed url=${attachment.remoteUrl} ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return results;
+  }
+
+  private async normalizeOneAttachment(
+    accountId: string,
+    attachment: NonNullable<UnifiedInboundEvent["attachments"]>[number],
+  ): Promise<NormalizedMediaAttachment | undefined> {
+    if (!attachment?.remoteUrl) return undefined;
     // Keep fetch/decrypt/save on the same account-aware limit instead of falling back
     // to the core media store default (5MB).
-    const maxBytes = this.resolveInboundMaxBytes(event.accountId);
-    // Bot-ws media is AES-encrypted; use decryption when aesKey is present
-    if (first.aesKey) {
-      return this.downloadEncryptedMedia({ url: first.remoteUrl, aesKey: first.aesKey, maxBytes });
+    const maxBytes = this.resolveInboundMaxBytes(accountId);
+    if (attachment.aesKey) {
+      return this.downloadEncryptedMedia({
+        url: attachment.remoteUrl,
+        aesKey: attachment.aesKey,
+        maxBytes,
+      });
     }
-    return this.downloadRemoteMedia({ url: first.remoteUrl, maxBytes });
+    return this.downloadRemoteMedia({ url: attachment.remoteUrl, maxBytes });
   }
 }

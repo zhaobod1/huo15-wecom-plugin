@@ -3,18 +3,18 @@ import path from "node:path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
-import { uploadAndSendBotWsMedia } from "./media.js";
+import { uploadAndReplyBotWsMedia } from "./media.js";
 import { createBotWsReplyHandle } from "./reply.js";
 
 vi.mock("./media.js", () => ({
-  uploadAndSendBotWsMedia: vi.fn(),
+  uploadAndReplyBotWsMedia: vi.fn(),
 }));
 
 type ReplyHandleParams = Parameters<typeof createBotWsReplyHandle>[0];
 
 describe("createBotWsReplyHandle", () => {
   let mockClient: import("vitest").Mocked<WSClient>;
-  const uploadAndSendBotWsMediaMock = vi.mocked(uploadAndSendBotWsMedia);
+  const uploadAndReplyBotWsMediaMock = vi.mocked(uploadAndReplyBotWsMedia);
 
   beforeEach(async () => {
     vi.useFakeTimers();
@@ -29,8 +29,8 @@ describe("createBotWsReplyHandle", () => {
     mockClient.replyStream.mockResolvedValue({} as any);
     mockClient.sendMessage.mockResolvedValue({} as any);
     mockClient.replyWelcome.mockResolvedValue({} as any);
-    uploadAndSendBotWsMediaMock.mockReset();
-    uploadAndSendBotWsMediaMock.mockResolvedValue({ ok: true, messageId: "media-1" } as any);
+    uploadAndReplyBotWsMediaMock.mockReset();
+    uploadAndReplyBotWsMediaMock.mockResolvedValue({ ok: true, messageId: "media-1" } as any);
     const runtime = await import("../../runtime.js");
     runtime.setWecomRuntime({
       config: {
@@ -231,9 +231,9 @@ describe("createBotWsReplyHandle", () => {
       { kind: "final" },
     );
 
-    expect(uploadAndSendBotWsMediaMock).toHaveBeenCalledWith(
+    expect(uploadAndReplyBotWsMediaMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatId: "hidao",
+        frame: expect.objectContaining({ headers: { req_id: "req-final-media-roots" } }),
         maxBytes: 80 * 1024 * 1024,
         mediaUrl: "/Users/YanHaidao/Downloads/01.png",
         mediaLocalRoots: expect.arrayContaining([
@@ -300,9 +300,9 @@ describe("createBotWsReplyHandle", () => {
       { kind: "final" },
     );
 
-    expect(uploadAndSendBotWsMediaMock).toHaveBeenCalledWith(
+    expect(uploadAndReplyBotWsMediaMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatId: "hidao",
+        frame: expect.objectContaining({ headers: { req_id: "req-final-media-max-bytes" } }),
         maxBytes: 40 * 1024 * 1024,
       }),
     );
