@@ -17,6 +17,7 @@ import { createBotWsSessionSnapshot } from "./session.js";
 export class BotWsSdkAdapter {
   private client?: AiBot.WSClient;
   private readonly ownerId: string;
+  private restarting = false;
 
   constructor(
     private readonly runtime: WecomAccountRuntime,
@@ -26,6 +27,7 @@ export class BotWsSdkAdapter {
   }
 
   start(): void {
+    this.restarting = false;
     const bot = this.runtime.account.bot;
     if (!bot?.wsConfigured || !bot.ws) {
       throw new Error(`WeCom bot account "${this.runtime.account.accountId}" missing WS config.`);
@@ -231,6 +233,21 @@ export class BotWsSdkAdapter {
             authenticated: client.isConnected,
             lastError: error instanceof Error ? error.message : String(error),
           });
+        },
+        onReconnectNeeded: (accountId) => {
+          this.log.warn?.(
+            `[wecom-ws] watchdog triggered reconnect for account=${accountId}`,
+          );
+          // Trigger WS reconnect by disconnecting; the SDK auto-reconnects.
+          // Also stop current adapter to allow clean restart.
+          this.stop();
+          // Reset and restart after a brief delay to avoid reconnect storms
+          setTimeout(() => {
+            this.log.info?.(
+              `[wecom-ws] restarting adapter for account=${accountId}`,
+            );
+            this.start();
+          }, 1000);
         },
       });
 

@@ -16,6 +16,53 @@ import { sendAgentApiText } from "../agent-api/client.js";
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
 const MAX_KEEPALIVE_MS = 120 * 1000; // Force stop keepalive after 120s if ignored
 
+// ── WS Health Watchdog ──
+// Per-account counter of consecutive ack timeouts within a rolling window.
+// When threshold is exceeded, triggers a callback (e.g. WS reconnect).
+interface AckTimeoutWatchdog {
+  accountId: string;
+  count: number;
+  firstHitAt: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+const ACK_TIMEOUT_WARNING_THRESHOLD = 5;  // consecutive timeouts before warning
+const ACK_TIMEOUT_RECONNECT_THRESHOLD = 8; // consecutive timeouts before call reconnect
+const ACK_TIMEOUT_WINDOW_MS = 120_000;     // reset counter if no hits within 2 min
+
+const ackWatchdogs = new Map<string, AckTimeoutWatchdog>();
+
+function hitAckTimeoutWatchdog(params: {
+  accountId: string;
+  onReconnectNeeded?: (accountId: string) => void;
+}): void {
+  const key = params.accountId;
+  const now = Date.now();
+  let wd = ackWatchdogs.get(key);
+  if (!wd || now - wd.firstHitAt > ACK_TIMEOUT_WINDOW_MS) {
+    wd = { accountId: key, count: 0, firstHitAt: now };
+    ackWatchdogs.set(key, wd);
+  }
+  wd.count += 1;
+
+  // Reset timer: clear counter if no more timeouts within the window
+  if (wd.timer) clearTimeout(wd.timer);
+  wd.timer = setTimeout(() => {
+    ackWatchdogs.delete(key);
+  }, ACK_TIMEOUT_WINDOW_MS);
+
+  if (wd.count >= ACK_TIMEOUT_RECONNECT_THRESHOLD) {
+    console.warn(
+      `[wecom-ws] watchdog: ${wd.count} consecutive ack timeouts for account=${key}, triggering reconnect`,
+    );
+    ackWatchdogs.delete(key); // reset after firing
+    params.onReconnectNeeded?.(key);
+  } else if (wd.count >= ACK_TIMEOUT_WARNING_THRESHOLD) {
+    console.warn(
+      `[wecom-ws] watchdog: ${wd.count} ack timeouts within window for account=${key} (threshold=${ACK_TIMEOUT_RECONNECT_THRESHOLD})`,
+    );
+  }
+}
+
 function isInvalidReqIdError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -68,6 +115,7 @@ export function createBotWsReplyHandle(params: {
   autoSendPlaceholder?: boolean;
   onDeliver?: () => void;
   onFail?: (error: unknown) => void;
+  onReconnectNeeded?: (accountId: string) => void;
 }): ReplyHandle {
   let streamId: string | undefined;
   let accumulatedText = "";
@@ -332,6 +380,14 @@ export function createBotWsReplyHandle(params: {
         return;
       }
 
+      // For non-final (block) chunks: only accumulate text, don't send.
+      // Sending each block via WS individually feeds the SDK's reply queue,
+      // where each item waits 5s for WS ack. If ack is slow, 24 blocks × 5s = 120s.
+      // Final delivery handles the full accumulated text in a single shot.
+      if (info.kind !== "final") {
+        return;
+      }
+
       settleStream();
 
       // Short-term fix: if WS is disconnected (e.g. after gateway restart),
@@ -381,7 +437,7 @@ export function createBotWsReplyHandle(params: {
             params.frame,
             resolveStreamId(),
             toWeComMarkdownV2(finalText),
-            info.kind === "final",
+            true,
           );
         }
       } catch (error) {
@@ -390,6 +446,11 @@ export function createBotWsReplyHandle(params: {
           // The WS reqId slot is released after ack timeout, but the
           // Agent API uses a separate HTTP path so it can still deliver.
           if (isAckTimeoutError(error) || isInvalidReqIdError(error)) {
+            // Record this hit in the health watchdog (may trigger reconnect)
+            hitAckTimeoutWatchdog({
+              accountId: params.accountId,
+              onReconnectNeeded: params.onReconnectNeeded,
+            });
             console.warn(
               `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying Agent API fallback`,
             );
