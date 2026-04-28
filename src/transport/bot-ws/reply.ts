@@ -466,49 +466,57 @@ export function createBotWsReplyHandle(params: {
             markdown_v2: { content: toWeComMarkdownV2(finalText) },
           } as unknown as Parameters<typeof params.client.sendMessage>[1]);
         } else {
-          await params.client.replyStream(
-            params.frame,
-            resolveStreamId(),
-            toWeComMarkdownV2(finalText),
-            true,
-          );
+          // Race WS replyStream with a timeout to avoid being blocked by the
+          // SDK's global reply queue (which can backlog during ack timeouts).
+          // If WS doesn't ack within 6s, fall back to Agent API immediately.
+          const WS_REPLY_TIMEOUT_MS = 6000;
+          await Promise.race([
+            params.client.replyStream(
+              params.frame,
+              resolveStreamId(),
+              toWeComMarkdownV2(finalText),
+              true,
+            ),
+            new Promise<void>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`WS reply timed out after ${WS_REPLY_TIMEOUT_MS}ms`)),
+                WS_REPLY_TIMEOUT_MS,
+              ),
+            ),
+          ]);
         }
       } catch (error) {
-        if (isTerminalReplyError(error)) {
-          // Ack timeout: try Agent API fallback before giving up.
-          // The WS reqId slot is released after ack timeout, but the
-          // Agent API uses a separate HTTP path so it can still deliver.
-          if (isAckTimeoutError(error) || isInvalidReqIdError(error)) {
-            // Record this hit in the health watchdog (may trigger reconnect)
-            hitAckTimeoutWatchdog({
-              accountId: params.accountId,
-              onReconnectNeeded: params.onReconnectNeeded,
-            });
-            console.warn(
-              `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying Agent API fallback`,
-            );
-            try {
-              await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
-              params.onDeliver?.();
-              return;
-            } catch (fallbackErr) {
-              // fallback failed too, proceed to onFail
-            }
-          }
+        // Any WS error (ack timeout, queue backlog, network) → Agent API fallback
+        const isWsTimeout = error instanceof Error &&
+          (error.message.includes("ack timeout") || error.message.includes("timed out"));
+        if (isWsTimeout) {
+          // Record this hit in the health watchdog (may trigger reconnect)
+          hitAckTimeoutWatchdog({
+            accountId: params.accountId,
+            onReconnectNeeded: params.onReconnectNeeded,
+          });
+          console.warn(
+            `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying Agent API fallback`,
+          );
+        } else if (isTerminalReplyError(error)) {
+          // Invalid reqId or expired stream → just fail
           params.onFail?.(error);
           return;
+        } else {
+          console.warn(
+            `[wecom-ws] WS delivery failed for ${peerId}: ${error instanceof Error ? error.message : String(error)}, trying fallback`,
+          );
         }
-        // WS delivery failed (may be disconnected mid-flight). Try fallback.
-        console.warn(
-          `[wecom-ws] WS delivery failed for ${peerId}: ${error instanceof Error ? error.message : String(error)}, trying fallback`,
-        );
+        // Attempt Agent API fallback for any WS delivery issue
         try {
           await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
           params.onDeliver?.();
+          return;
         } catch (fallbackErr) {
+          // Both WS and Agent API failed
           params.onFail?.(fallbackErr);
+          return;
         }
-        return;
       }
       params.onDeliver?.();
     },
