@@ -15,6 +15,10 @@ import { sendAgentApiText } from "../agent-api/client.js";
 
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
 const MAX_KEEPALIVE_MS = 120 * 1000; // Force stop keepalive after 120s if ignored
+// v2.8.5 ⭐ partial streaming cap — limit fire-and-forget partial replyStream calls to
+// avoid SDK reply queue saturation (each pending partial waits ~5s for WS ack).
+// Excess block chunks are silently accumulated and flushed in the final reply.
+const MAX_PARTIAL_REPLIES = 8;
 
 // ── WS Health Watchdog ──
 // Per-account counter of consecutive ack timeouts within a rolling window.
@@ -130,6 +134,8 @@ export function createBotWsReplyHandle(params: {
   let placeholderInFlight = false;
   let placeholderKeepalive: ReturnType<typeof setInterval> | undefined;
   let placeholderTimeout: ReturnType<typeof setTimeout> | undefined;
+  // v2.8.5 ⭐ count of fire-and-forget partial replyStream calls; capped at MAX_PARTIAL_REPLIES
+  let partialReplyCount = 0;
 
   // Extract peerId for clustering handles
   const body = params.frame.body as any;
@@ -380,11 +386,38 @@ export function createBotWsReplyHandle(params: {
         return;
       }
 
-      // For non-final (block) chunks: only accumulate text, don't send.
-      // Sending each block via WS individually feeds the SDK's reply queue,
-      // where each item waits 5s for WS ack. If ack is slow, 24 blocks × 5s = 120s.
-      // Final delivery handles the full accumulated text in a single shot.
+      // v2.8.5 ⭐ Stream partial chunks via replyStream(last=false) so user sees progress.
+      // Cap at MAX_PARTIAL_REPLIES to avoid SDK reply queue saturation
+      // (each pending partial waits ~5s for WS ack; too many partials can stall final).
+      // Excess block chunks are silently accumulated and flushed in the final reply.
+      // Partial sends are fire-and-forget: any failure is non-terminal because final
+      // delivery will (re)send the complete accumulated content.
       if (info.kind !== "final") {
+        if (partialReplyCount < MAX_PARTIAL_REPLIES) {
+          partialReplyCount += 1;
+          // Stop placeholder keepalive when first real partial arrives — otherwise
+          // the next keepalive tick would overwrite this partial with the placeholder.
+          stopPlaceholderKeepalive();
+          notifyPeerActive();
+          void params.client
+            .replyStream(
+              params.frame,
+              resolveStreamId(),
+              toWeComMarkdownV2(outboundText),
+              false,
+            )
+            .catch((error) => {
+              // ack timeout / invalid reqId / expired stream are all non-terminal here:
+              // the final reply will deliver the full accumulated content.
+              // We still feed the watchdog to detect chronic WS health degradation.
+              if (isAckTimeoutError(error)) {
+                hitAckTimeoutWatchdog({
+                  accountId: params.accountId,
+                  onReconnectNeeded: params.onReconnectNeeded,
+                });
+              }
+            });
+        }
         return;
       }
 

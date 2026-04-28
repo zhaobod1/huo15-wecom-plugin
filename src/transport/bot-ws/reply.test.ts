@@ -23,6 +23,8 @@ describe("createBotWsReplyHandle", () => {
       replyStream: vi.fn(),
       sendMessage: vi.fn(),
       replyWelcome: vi.fn(),
+      // v2.8.5 — simulate healthy WS connection so reply paths don't fallback to Agent API
+      isConnected: true,
     } as unknown as import("vitest").Mocked<WSClient>;
     mockClient.replyStream.mockResolvedValue({} as any);
     mockClient.sendMessage.mockResolvedValue({} as any);
