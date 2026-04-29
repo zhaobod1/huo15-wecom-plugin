@@ -150,17 +150,30 @@ export class BotWsSdkAdapter {
           error: reason ?? "unknown",
         });
       }
-      this.runtime.updateTransportSession(
-        createBotWsSessionSnapshot({
-          accountId: this.runtime.account.accountId,
+      if (kicked) {
+        // Real kick — mark as not-running so health-monitor can restart.
+        this.runtime.updateTransportSession(
+          createBotWsSessionSnapshot({
+            accountId: this.runtime.account.accountId,
+            ownerId: this.ownerId,
+            running: false,
+            connected: false,
+            authenticated: false,
+            lastDisconnectedAt: Date.now(),
+            lastError: reason,
+          }),
+        );
+      } else {
+        // Informational disconnect (e.g. "New connection established").
+        // The SDK handles reconnection internally; touching only timestamps
+        // avoids destabilising the health-monitor which would otherwise
+        // restart → new WS → server kills old → infinite loop.
+        this.runtime.touchTransportSession("bot-ws", {
           ownerId: this.ownerId,
-          running: false,
-          connected: false,
-          authenticated: false,
           lastDisconnectedAt: Date.now(),
           lastError: reason,
-        }),
-      );
+        });
+      }
     });
 
     client.on("reconnecting", (attempt) => {
@@ -189,6 +202,19 @@ export class BotWsSdkAdapter {
       const botAccount = this.runtime.account.bot;
       if (!botAccount) {
         return;
+      }
+      // Skip system events that are handled by the SDK lifecycle hooks.
+      // Routing them to the agent causes reply failures that destabilise
+      // the health-monitor (connected=false on touch → restart loop).
+      const body = frame.body;
+      if (body && (body as EventMessage).msgtype === "event") {
+        const eventType = String((body as EventMessage).event?.eventtype ?? "");
+        if (eventType === "disconnected_event") {
+          this.log.info?.(
+            `[wecom-ws] frame account=${this.runtime.account.accountId} cmd=${frame.cmd} event=disconnected_event (skipped — handled by lifecycle)`,
+          );
+          return;
+        }
       }
       this.log.info?.(
         `[wecom-ws] frame account=${this.runtime.account.accountId} cmd=${frame.cmd} reqId=${frame.headers.req_id ?? "n/a"}`,

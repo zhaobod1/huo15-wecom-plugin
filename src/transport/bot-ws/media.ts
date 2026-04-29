@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WeComMediaType, WsFrameHeaders, WSClient } from "@wecom/aibot-node-sdk";
@@ -100,6 +101,9 @@ function extractFileName(
 function resolveLocalMediaPath(mediaUrl: string): string {
   if (mediaUrl.startsWith("file://")) {
     return fileURLToPath(mediaUrl);
+  }
+  if (mediaUrl.startsWith("~")) {
+    return path.join(os.homedir(), mediaUrl.slice(1));
   }
   return mediaUrl;
 }

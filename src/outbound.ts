@@ -706,9 +706,13 @@ export const wecomOutbound: ChannelOutboundAdapter = {
       // 本地文件路径
       const fs = await import("node:fs/promises");
       const path = await import("node:path");
+      const os = await import("node:os");
 
-      buffer = await fs.readFile(mediaUrl);
-      filename = path.basename(mediaUrl);
+      const resolvedPath = mediaUrl.startsWith("~")
+        ? path.join(os.homedir(), mediaUrl.slice(1))
+        : mediaUrl;
+      buffer = await fs.readFile(resolvedPath);
+      filename = path.basename(resolvedPath);
 
       // 根据扩展名推断 content-type
       const ext = path.extname(mediaUrl).slice(1).toLowerCase();
