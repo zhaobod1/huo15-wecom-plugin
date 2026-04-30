@@ -143,7 +143,9 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
   // security 配置在 WeCom 中不需要，框架会通过 resolveAllowFrom 自动判断
   groups: {
     // WeCom bots are usually mention-gated by the platform in groups already.
-    resolveRequireMention: () => true,
+    // Set to false so the framework doesn't inject "trigger-only" activation
+    // prompt that causes the LLM to stay silent in group chats.
+    resolveRequireMention: () => false,
   },
   threading: {
     resolveReplyToMode: () => "off",

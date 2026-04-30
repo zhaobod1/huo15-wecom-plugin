@@ -1,6 +1,6 @@
 {
   "name": "@huo15/wecom",
-"version": "2.8.10",
+  "version": "2.8.10",
   "description": "OpenClaw 企业微信（WeCom）插件，默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换",
   "license": "ISC",
   "author": "YanHaidao (VX: YanHaidao)",
@@ -29,6 +29,12 @@
     "extensions": [
       "./index.ts"
     ],
+    "compat": {
+      "pluginApi": ">=2026.3.23"
+    },
+    "build": {
+      "openclawVersion": "2026.4.27"
+    },
     "channel": {
       "id": "wecom",
       "label": "WeCom (企业微信)",
