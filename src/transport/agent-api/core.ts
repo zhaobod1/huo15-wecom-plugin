@@ -13,6 +13,31 @@ type TokenCache = {
 
 const tokenCaches = new Map<string, TokenCache>();
 
+// 企业微信媒体上传大小限制（与 Bot WS 路径保持一致）
+// https://developer.work.weixin.qq.com/document/path/90253
+const WECOM_MEDIA_SIZE_LIMITS: Record<string, number> = {
+  image: 10 * 1024 * 1024,   // 10MB
+  voice: 2 * 1024 * 1024,    // 2MB
+  video: 10 * 1024 * 1024,   // 10MB
+  file: 20 * 1024 * 1024,    // 20MB
+};
+
+function resolveEffectiveUploadType(
+  type: "image" | "voice" | "video" | "file",
+  bufferSize: number,
+): { effectiveType: "image" | "voice" | "video" | "file"; downgraded: boolean } {
+  // 文件/语音超过各自上限直接由 uploadMedia 抛出清晰错误
+  // 图片/视频超过自身上限但未超文件上限 → 降级为 file
+  if (
+    (type === "image" || type === "video") &&
+    bufferSize > WECOM_MEDIA_SIZE_LIMITS[type] &&
+    bufferSize <= WECOM_MEDIA_SIZE_LIMITS.file
+  ) {
+    return { effectiveType: "file", downgraded: true };
+  }
+  return { effectiveType: type, downgraded: false };
+}
+
 function truncateForLog(raw: string, maxChars = 180): string {
   const compact = raw.replace(/\s+/g, " ").trim();
   if (compact.length <= maxChars) return compact;
@@ -38,7 +63,7 @@ export function normalizeUploadFilename(filename: string): string {
 export function guessUploadContentType(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   const contentTypeMap: Record<string, string> = {
-    jpg: "image/jpg",
+    jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
     gif: "image/gif",
@@ -455,11 +480,37 @@ export async function uploadMedia(params: {
 }): Promise<string> {
   const { agent, type, buffer, filename } = params;
   const safeFilename = normalizeUploadFilename(filename);
+  const sizeLimit = WECOM_MEDIA_SIZE_LIMITS[type];
+  const fileSizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
+
+  // 检查文件是否超过全局上限（20MB）
+  if (buffer.length > WECOM_MEDIA_SIZE_LIMITS.file) {
+    throw new Error(
+      `文件大小 ${fileSizeMB}MB 超过了企业微信允许的最大限制 20MB，无法发送。`,
+    );
+  }
+
+  // 如果需要降级（图片/视频超过自身上限但未超文件上限），转为 file 类型上传
+  const { effectiveType, downgraded } = resolveEffectiveUploadType(type, buffer.length);
+  if (downgraded) {
+    console.log(
+      `[wecom-upload] Downgrading upload type from ${type} to file (size=${fileSizeMB}MB > ${(sizeLimit / (1024 * 1024)).toFixed(0)}MB limit)`,
+    );
+  }
+
+  // 检查非降级场景下是否超过该类型的上限（语音无降级路径，直接拒绝）
+  if (!downgraded && buffer.length > sizeLimit) {
+    const limitMB = (sizeLimit / (1024 * 1024)).toFixed(0);
+    throw new Error(
+      `文件大小 ${fileSizeMB}MB 超过了企业微信 ${type} 类型允许的最大限制 ${limitMB}MB，无法发送。`,
+    );
+  }
+
   const token = await getAccessToken(agent);
   const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
-  const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
+  const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(effectiveType)}&debug=1`;
 
-  console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes, corpId=${agent.corpId}`);
+  console.log(`[wecom-upload] Uploading media: originalType=${type} effectiveType=${effectiveType} filename=${safeFilename}, size=${buffer.length} bytes, corpId=${agent.corpId}`);
 
   const uploadOnce = async (fileContentType: string) => {
     const boundary = `----WebKitFormBoundary${crypto.randomBytes(16).toString("hex")}`;
