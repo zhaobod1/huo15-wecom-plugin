@@ -1,6 +1,8 @@
 {
   "id": "wecom",
-  "channels": ["wecom"],
+  "channels": [
+    "wecom"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
@@ -50,40 +52,86 @@
             "properties": {
               "primaryTransport": {
                 "type": "string",
-                "enum": ["ws", "webhook"],
+                "enum": [
+                  "ws",
+                  "webhook"
+                ],
                 "default": "ws",
                 "description": "Bot 主传输方式：ws（默认，长连接）/ webhook（需公网回调）"
               },
-              "streamPlaceholderContent": { "type": "string" },
-              "welcomeText": { "type": "string" },
-              "aibotid": { "type": "string" },
-              "botIds": { "type": "array", "items": { "type": "string" } },
+              "streamPlaceholderContent": {
+                "type": "string"
+              },
+              "welcomeText": {
+                "type": "string"
+              },
+              "aibotid": {
+                "type": "string"
+              },
+              "botIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "dm": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "policy": { "type": "string", "enum": ["pairing", "allowlist", "open", "disabled"] },
-                  "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } }
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "pairing",
+                      "allowlist",
+                      "open",
+                      "disabled"
+                    ]
+                  },
+                  "allowFrom": {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  }
                 }
               },
               "ws": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "botId": { "type": "string" },
-                  "secret": { "type": "string" }
+                  "botId": {
+                    "type": "string"
+                  },
+                  "secret": {
+                    "type": "string"
+                  }
                 },
-                "required": ["botId", "secret"]
+                "required": [
+                  "botId",
+                  "secret"
+                ]
               },
               "webhook": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "token": { "type": "string" },
-                  "encodingAESKey": { "type": "string" },
-                  "receiveId": { "type": "string" }
+                  "token": {
+                    "type": "string"
+                  },
+                  "encodingAESKey": {
+                    "type": "string"
+                  },
+                  "receiveId": {
+                    "type": "string"
+                  }
                 },
-                "required": ["token", "encodingAESKey"]
+                "required": [
+                  "token",
+                  "encodingAESKey"
+                ]
               }
             }
           },
@@ -92,51 +140,120 @@
             "description": "Agent 应用配置（顶层兜底；建议优先用 accounts.<key>.agent 多账户配置）",
             "additionalProperties": true,
             "properties": {
-              "corpId": { "type": "string", "description": "企业 corpId" },
-              "agentSecret": { "type": "string" },
-              "corpSecret": { "type": "string" },
-              "agentId": { "type": ["number", "string"] },
-              "token": { "type": "string" },
-              "encodingAESKey": { "type": "string" },
-              "welcomeText": { "type": "string" },
+              "corpId": {
+                "type": "string",
+                "description": "企业 corpId"
+              },
+              "agentSecret": {
+                "type": "string"
+              },
+              "corpSecret": {
+                "type": "string"
+              },
+              "agentId": {
+                "type": [
+                  "number",
+                  "string"
+                ]
+              },
+              "token": {
+                "type": "string"
+              },
+              "encodingAESKey": {
+                "type": "string"
+              },
+              "welcomeText": {
+                "type": "string"
+              },
               "dm": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "policy": { "type": "string", "enum": ["pairing", "allowlist", "open", "disabled"] },
-                  "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } }
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "pairing",
+                      "allowlist",
+                      "open",
+                      "disabled"
+                    ]
+                  },
+                  "allowFrom": {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  }
                 }
               }
             },
-            "required": ["corpId", "token", "encodingAESKey"]
+            "required": [
+              "corpId",
+              "token",
+              "encodingAESKey"
+            ]
           },
           "kefu": {
             "type": "object",
             "description": "微信客服 (kefu) 配置（顶层兜底）",
             "additionalProperties": true,
             "properties": {
-              "corpId": { "type": "string" },
-              "corpSecret": { "type": "string" },
-              "openKfIds": { "type": "array", "items": { "type": "string" } },
-              "welcomeText": { "type": "string" },
+              "corpId": {
+                "type": "string"
+              },
+              "corpSecret": {
+                "type": "string"
+              },
+              "openKfIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "welcomeText": {
+                "type": "string"
+              },
               "webhook": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "token": { "type": "string" },
-                  "encodingAESKey": { "type": "string" }
+                  "token": {
+                    "type": "string"
+                  },
+                  "encodingAESKey": {
+                    "type": "string"
+                  }
                 },
-                "required": ["token", "encodingAESKey"]
+                "required": [
+                  "token",
+                  "encodingAESKey"
+                ]
               },
               "dm": {
                 "type": "object",
                 "additionalProperties": true,
                 "properties": {
-                  "policy": { "type": "string", "enum": ["pairing", "allowlist", "open", "disabled"] }
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "pairing",
+                      "allowlist",
+                      "open",
+                      "disabled"
+                    ]
+                  }
                 }
               }
             },
-            "required": ["corpId", "corpSecret", "openKfIds", "webhook"]
+            "required": [
+              "corpId",
+              "corpSecret",
+              "openKfIds",
+              "webhook"
+            ]
           },
           "accounts": {
             "type": "object",
@@ -145,12 +262,25 @@
               "type": "object",
               "additionalProperties": true,
               "properties": {
-                "enabled": { "type": "boolean", "default": true },
-                "name": { "type": "string" },
-                "mediaMaxMb": { "type": "number" },
-                "bot": { "$ref": "#/properties/bot" },
-                "agent": { "$ref": "#/properties/agent" },
-                "kefu": { "$ref": "#/properties/kefu" }
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "name": {
+                  "type": "string"
+                },
+                "mediaMaxMb": {
+                  "type": "number"
+                },
+                "bot": {
+                  "$ref": "#/properties/bot"
+                },
+                "agent": {
+                  "$ref": "#/properties/agent"
+                },
+                "kefu": {
+                  "$ref": "#/properties/kefu"
+                }
               }
             }
           },
@@ -158,28 +288,52 @@
             "type": "object",
             "additionalProperties": true,
             "properties": {
-              "tempDir": { "type": "string" },
-              "retentionHours": { "type": "number" },
-              "cleanupOnStart": { "type": "boolean" },
-              "maxBytes": { "type": "number" },
-              "downloadTimeoutMs": { "type": "number" },
-              "localRoots": { "type": "array", "items": { "type": "string" } }
+              "tempDir": {
+                "type": "string"
+              },
+              "retentionHours": {
+                "type": "number"
+              },
+              "cleanupOnStart": {
+                "type": "boolean"
+              },
+              "maxBytes": {
+                "type": "number"
+              },
+              "downloadTimeoutMs": {
+                "type": "number"
+              },
+              "localRoots": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "network": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
-              "egressProxyUrl": { "type": "string" },
-              "timeoutMs": { "type": "number" },
-              "mediaDownloadTimeoutMs": { "type": "number" }
+              "egressProxyUrl": {
+                "type": "string"
+              },
+              "timeoutMs": {
+                "type": "number"
+              },
+              "mediaDownloadTimeoutMs": {
+                "type": "number"
+              }
             }
           },
           "routing": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
-              "failClosedOnDefaultRoute": { "type": "boolean", "default": false }
+              "failClosedOnDefaultRoute": {
+                "type": "boolean",
+                "default": false
+              }
             }
           },
           "dynamicAgents": {
@@ -187,14 +341,31 @@
             "description": "动态 agent 派生（DM 来人即建 agent / 群聊 1:1 派生）",
             "additionalProperties": true,
             "properties": {
-              "enabled": { "type": "boolean", "default": false },
-              "dmCreateAgent": { "type": "boolean", "default": false },
-              "groupEnabled": { "type": "boolean", "default": false },
-              "adminUsers": { "type": "array", "items": { "type": "string" } }
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "dmCreateAgent": {
+                "type": "boolean",
+                "default": false
+              },
+              "groupEnabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "adminUsers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
       }
     }
+  },
+  "activation": {
+    "onStartup": true
   }
 }

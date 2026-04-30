@@ -38,13 +38,11 @@ export class WecomUpstreamAgentDeliveryService {
       );
     }
     const target = scoped.target;
+    // v2.8.12: 与 delivery-service.ts 对齐，不再硬性拒绝群聊 chatid。上游 Agent 若有
+    // 群聊权限即可正常发送，无权限时由 WeCom API 返回错误，上层 catch 降级处理。
     if (target.chatid) {
       console.warn(
-        `[wecom-upstream-delivery] blocked chat target account=${this.upstreamAgent.accountId} chatId=${target.chatid}`,
-      );
-      throw new Error(
-        `企业微信（WeCom）上下游 Agent 主动发送不支持向群 chatId 发送（chatId=${target.chatid}）。` +
-        `请改为发送给用户（userid / user:xxx）。`,
+        `[wecom-upstream-delivery] group chat delivery via Agent API (may fail with 86008) account=${this.upstreamAgent.accountId} chatId=${target.chatid}`,
       );
     }
     return target;

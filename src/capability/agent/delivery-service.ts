@@ -30,14 +30,12 @@ export class WecomAgentDeliveryService {
       );
     }
     const target = scoped.target;
+    // v2.8.12: 不再硬性拒绝 chatid 目标。Bot WS 无法投递时会走到此 Agent fallback，
+    // 如果 Agent 应用有群聊权限则可正常发送（appchat/send），无权限时 WeCom API 会返回
+    // 86008 错误，由上层 catch 处理（降级提示），而不是提前阻断所有群聊回执。
     if (target.chatid) {
       console.warn(
-        `[wecom-agent-delivery] blocked chat target account=${this.agent.accountId} chatId=${target.chatid}`,
-      );
-      throw new Error(
-        `企业微信（WeCom）Agent 主动发送不支持向群 chatId 发送（chatId=${target.chatid}）。` +
-        `该路径在实际环境中经常失败（例如 86008：无权限访问该会话/会话由其他应用创建）。` +
-        `请改为发送给用户（userid / user:xxx），或由 Bot 模式在群内交付。`,
+        `[wecom-agent-delivery] group chat delivery via Agent API (may fail with 86008) account=${this.agent.accountId} chatId=${target.chatid}`,
       );
     }
     return target;
