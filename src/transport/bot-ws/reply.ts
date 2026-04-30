@@ -7,7 +7,7 @@ import {
 } from "@wecom/aibot-node-sdk";
 import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
-import { getAccountRuntime, getReplyTransformer, getWecomRuntime } from "../../runtime.js";
+import { getAccountRuntime, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
 import { toWeComMarkdownV2 } from "../../wecom_msg_adapter/markdown_adapter.js";
 import { uploadAndReplyBotWsMedia } from "./media.js";
@@ -427,11 +427,10 @@ export function createBotWsReplyHandle(params: {
 
       settleStream();
 
-      // Short-term fix: if WS is disconnected (e.g. after gateway restart),
-      // fall back to Agent API delivery to ensure the reply still reaches the user
+      // WS disconnected → Agent API is the only option.
       if (!params.client.isConnected) {
         console.warn(
-          `[wecom-ws] WS not connected for account=${params.accountId} peer=${peerId}, using fallback delivery`,
+          `[wecom-ws] WS not connected for account=${params.accountId} peer=${peerId}, using agent fallback`,
         );
         try {
           await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
@@ -440,21 +439,6 @@ export function createBotWsReplyHandle(params: {
           params.onFail?.(err);
         }
         return;
-      }
-
-      // 调用 reply transformer（智能贴士 + 火苗宠物）
-      if (info.kind === "final" && params.inboundKind !== "welcome") {
-        const transformer = getReplyTransformer();
-        if (transformer) {
-          try {
-            finalText = transformer(finalText, {
-              peerId,
-              accountId: params.accountId,
-            });
-          } catch (e) {
-            console.error("[wecom-ws] reply transformer error:", e);
-          }
-        }
       }
 
       try {
@@ -490,20 +474,19 @@ export function createBotWsReplyHandle(params: {
           ]);
         }
       } catch (error) {
-        // Any WS error (ack timeout, queue backlog, network) → Agent API fallback
+        // replyStream (or replyWelcome / sendMessage) failed.
+        // Fallback tiers: Bot WS active push → Agent API.
         const isWsTimeout = error instanceof Error &&
           (error.message.includes("ack timeout") || error.message.includes("timed out"));
         if (isWsTimeout) {
-          // Record this hit in the health watchdog (may trigger reconnect)
           hitAckTimeoutWatchdog({
             accountId: params.accountId,
             onReconnectNeeded: params.onReconnectNeeded,
           });
           console.warn(
-            `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying Agent API fallback`,
+            `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying fallback`,
           );
         } else if (isTerminalReplyError(error)) {
-          // Invalid reqId or expired stream → just fail
           params.onFail?.(error);
           return;
         } else {
@@ -511,13 +494,34 @@ export function createBotWsReplyHandle(params: {
             `[wecom-ws] WS delivery failed for ${peerId}: ${error instanceof Error ? error.message : String(error)}, trying fallback`,
           );
         }
-        // Attempt Agent API fallback for any WS delivery issue
+
+        // Tier 1: Bot WS active push (sendMessage works for both direct & group
+        // chats where the bot is a member — unlike Agent API appchat/send which
+        // only works for app-created group chats).
+        if (params.client.isConnected) {
+          try {
+            await params.client.sendMessage(peerId, {
+              msgtype: "markdown_v2",
+              markdown_v2: { content: toWeComMarkdownV2(finalText) },
+            } as unknown as Parameters<typeof params.client.sendMessage>[1]);
+            console.log(
+              `[wecom-ws] fallback: delivered via sendMessage to ${peerKind}=${peerId}`,
+            );
+            params.onDeliver?.();
+            return;
+          } catch (sendErr) {
+            console.warn(
+              `[wecom-ws] sendMessage fallback failed for ${peerKind}=${peerId}: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}`,
+            );
+          }
+        }
+
+        // Tier 2: Agent API (last resort — requires Agent app in the chat).
         try {
           await fallbackAgentApiDelivery(toWeComMarkdownV2(finalText));
           params.onDeliver?.();
           return;
         } catch (fallbackErr) {
-          // Both WS and Agent API failed
           params.onFail?.(fallbackErr);
           return;
         }

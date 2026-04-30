@@ -10,8 +10,6 @@ import { wecomPlugin } from "./src/channel.js";
 import { handleWecomWebhookRequest } from "./src/monitor.js";
 import { setWecomRuntime } from "./src/runtime.js";
 import { isWecomBotWsSource } from "./src/runtime/source-registry.js";
-// [已移除] 小贴士+宠物模块 — 反复导致企微不回复，且与 enhance 插件冲突
-// import { registerWecomTipsPet } from "./src/modules/tips-pet.js";
 
 const WECOM_BOT_WS_MEDIA_GUIDANCE = [
   "【WeCom Bot WS 媒体发送】",
