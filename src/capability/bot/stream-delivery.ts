@@ -17,7 +17,10 @@ import {
 import type { BotRuntimeLogger, RecordBotOperationalEvent } from "./types.js";
 
 const STREAM_MAX_BYTES = LIMITS.STREAM_MAX_BYTES;
-const BOT_WINDOW_MS = 6 * 60 * 1000;
+// 企微群机器人 response_url 实际有效期约 5 分钟。把窗口收紧到 4.5 分钟（switchAt = 4 分钟），
+// 让 nearTimeout 在 response_url 还活着时触发，用户能在 4 分钟时看到 "转私信" 提示，
+// 而不是等到企微已拒绝后才发现 prompt 推不出去。
+const BOT_WINDOW_MS = 4.5 * 60 * 1000;
 const BOT_SWITCH_MARGIN_MS = 30 * 1000;
 
 export function createBotReplyDispatcher(params: {

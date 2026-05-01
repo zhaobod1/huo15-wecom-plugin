@@ -55,40 +55,14 @@ export async function finalizeBotStream(params: {
 
   streamStore.markFinished(streamId);
 
-  const finishedState = streamStore.getStream(streamId);
-  if (finishedState?.fallbackMode === "timeout" && !finishedState.finalDeliveredAt) {
-    const agentCfg = resolveAgentAccountOrUndefined(config, accountId);
-    if (!agentCfg) {
-      streamStore.updateStream(streamId, (s) => {
-        s.finalDeliveredAt = Date.now();
-      });
-    } else if (finishedState.userId) {
-      const dmText = (finishedState.dmContent ?? "").trim();
-      if (dmText) {
-        try {
-          logVerbose(target, `fallback(timeout): 开始通过 Agent 私信发送剩余内容 user=${finishedState.userId} len=${dmText.length}`);
-          await sendAgentDmText({ agent: agentCfg, userId: finishedState.userId, text: dmText, core });
-          logVerbose(target, `fallback(timeout): Agent 私信发送完成 user=${finishedState.userId}`);
-        } catch (err) {
-          target.runtime.error?.(`wecom agent dm text failed (timeout): ${String(err)}`);
-          recordBotOperationalEvent(target, {
-            category: "fallback-delivery-failed",
-            summary: `timeout final dm failed streamId=${streamId} user=${finishedState.userId}`,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      streamStore.updateStream(streamId, (s) => {
-        s.finalDeliveredAt = Date.now();
-      });
-    }
-  }
-
   const stateAfterFinish = streamStore.getStream(streamId);
   const responseUrl = getActiveReplyUrl(streamId);
+
+  let responseUrlPushSucceeded = false;
   if (stateAfterFinish && responseUrl) {
     try {
       await pushFinalStreamReplyNow({ streamId, state: stateAfterFinish });
+      responseUrlPushSucceeded = true;
       logVerbose(
         target,
         `final stream pushed via response_url streamId=${streamId}, chatType=${chatType}, images=${stateAfterFinish.images?.length ?? 0}`,
@@ -99,6 +73,57 @@ export async function finalizeBotStream(params: {
         category: "fallback-delivery-failed",
         summary: `final stream push failed streamId=${streamId}`,
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Agent DM 兜底：当 response_url 推送失败、不可用，或已切到 fallback("timeout") 模式时，
+  // 通过自建应用私信把完整内容发给触发用户。修复：长任务期间 deliver 沉默时
+  // fallbackMode 不会被旁路触发，response_url 静默过期会让结果彻底丢失。
+  const stateForDm = streamStore.getStream(streamId);
+  const fallbackTriggered = stateForDm?.fallbackMode === "timeout";
+  const needsDmFallback =
+    !!stateForDm && !stateForDm.finalDeliveredAt && (!responseUrlPushSucceeded || fallbackTriggered);
+
+  if (needsDmFallback && stateForDm) {
+    const agentCfg = resolveAgentAccountOrUndefined(config, accountId);
+    const dmText = (stateForDm.dmContent ?? stateForDm.content ?? "").trim();
+    const dmReason = !responseUrlPushSucceeded ? "response-url-unavailable" : "fallback-timeout";
+
+    if (agentCfg && stateForDm.userId && dmText) {
+      try {
+        logVerbose(
+          target,
+          `fallback(final-dm): 通过 Agent 私信发送完整内容 user=${stateForDm.userId} len=${dmText.length} reason=${dmReason}`,
+        );
+        await sendAgentDmText({ agent: agentCfg, userId: stateForDm.userId, text: dmText, core });
+        logInfo(target, `fallback(final-dm): Agent 私信发送完成 user=${stateForDm.userId} reason=${dmReason}`);
+      } catch (err) {
+        target.runtime.error?.(`fallback(final-dm): Agent 私信发送失败 reason=${dmReason}: ${String(err)}`);
+        recordBotOperationalEvent(target, {
+          category: "fallback-delivery-failed",
+          summary: `final dm fallback failed streamId=${streamId} user=${stateForDm.userId} reason=${dmReason}`,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      streamStore.updateStream(streamId, (s) => {
+        s.finalDeliveredAt = Date.now();
+      });
+    } else if (!responseUrlPushSucceeded) {
+      const reasons: string[] = [];
+      if (!agentCfg) reasons.push("agent-not-configured");
+      if (!stateForDm.userId) reasons.push("user-id-missing");
+      if (!dmText) reasons.push("empty-content");
+      logInfo(
+        target,
+        `fallback(final-dm): 无法降级 Agent 私信 streamId=${streamId} reasons=${reasons.join(",")}`,
+      );
+      recordBotOperationalEvent(target, {
+        category: "fallback-delivery-failed",
+        summary: `final delivery dropped streamId=${streamId} reasons=${reasons.join(",")}`,
+      });
+      streamStore.updateStream(streamId, (s) => {
+        s.finalDeliveredAt = Date.now();
       });
     }
   }

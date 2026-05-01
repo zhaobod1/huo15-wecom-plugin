@@ -13,7 +13,7 @@ import type { WecomWebhookTarget } from "../../types/runtime-context.js";
 import { looksLikeSendLocalFileIntent, processBotInboundMessage } from "../../transport/bot-webhook/inbound-normalizer.js";
 import { resolveWecomSenderUserId } from "../../transport/bot-webhook/message-shape.js";
 import { buildWecomBotDispatchConfig } from "./dispatch-config.js";
-import { sendBotFallbackPromptNow } from "./fallback-delivery.js";
+import { buildFallbackPrompt, resolveAgentAccountOrUndefined, sendBotFallbackPromptNow } from "./fallback-delivery.js";
 import { finalizeBotStream } from "./stream-finalizer.js";
 import { handleDirectLocalPathIntent } from "./local-path-delivery.js";
 import { stageWecomInboundMediaForSession } from "./sandbox-media.js";
@@ -322,46 +322,90 @@ export function createBotStreamOrchestrator(params: {
     const cfgForDispatch = buildWecomBotDispatchConfig(config);
     logVerbose(target, "tool-policy: WeCom Bot 会话已禁用 message 工具（tools.deny += message；并同步到 tools.sandbox.tools.deny，防止绕过 Bot 交付）");
 
-    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-      ctx: ctxPayload,
-      cfg: cfgForDispatch,
-      replyOptions: { disableBlockStreaming: false },
-      dispatcherOptions: createBotReplyDispatcher({
+    // 主动 fallback timer：长任务期间 deliver 可能完全沉默（dispatcher 没机会触发 nearTimeout），
+    // 4 分钟时强制切到 fallback("timeout") 并推 prompt，让用户在 response_url 过期前看到提示。
+    // 与 stream-delivery.ts 的 BOT_WINDOW_MS(4.5min) - BOT_SWITCH_MARGIN_MS(30s) 对齐。
+    const PROACTIVE_FALLBACK_DELAY_MS = 4 * 60 * 1000;
+    let proactiveFallbackTimer: NodeJS.Timeout | null = setTimeout(() => {
+      proactiveFallbackTimer = null;
+      void (async () => {
+        const current = streamStore.getStream(streamId);
+        if (!current || current.finished || current.fallbackMode) return;
+        const agentCfg = resolveAgentAccountOrUndefined(config, account.accountId);
+        const prompt = buildFallbackPrompt({
+          kind: "timeout",
+          agentConfigured: Boolean(agentCfg),
+          userId: current.userId,
+          chatType: current.chatType,
+        });
+        streamStore.updateStream(streamId, (s) => {
+          s.fallbackMode = "timeout";
+          s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
+        });
+        try {
+          await sendBotFallbackPromptNow({ streamId, text: prompt });
+          logVerbose(
+            target,
+            `proactive fallback(timeout): 主动推送 prompt streamId=${streamId} agentConfigured=${Boolean(agentCfg)}`,
+          );
+        } catch (err) {
+          target.runtime.error?.(`proactive fallback prompt push failed streamId=${streamId}: ${String(err)}`);
+          recordBotOperationalEvent(target, {
+            category: "fallback-delivery-failed",
+            summary: `proactive fallback prompt push failed streamId=${streamId}`,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })();
+    }, PROACTIVE_FALLBACK_DELAY_MS);
+
+    try {
+      await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: ctxPayload,
+        cfg: cfgForDispatch,
+        replyOptions: { disableBlockStreaming: false },
+        dispatcherOptions: createBotReplyDispatcher({
+          streamStore,
+          target,
+          accountId: account.accountId,
+          config,
+          msg,
+          streamId,
+          rawBody,
+          chatType,
+          userId,
+          core,
+          tableMode,
+          logVerbose,
+          truncateUtf8Bytes,
+          recordBotOperationalEvent,
+        }),
+      });
+
+      const rawBodyNormalized = rawBody.trim();
+      const isResetCommand = /^\/(new|reset)(?:\s|$)/i.test(rawBodyNormalized);
+      const resetCommandKind = isResetCommand ? (rawBodyNormalized.match(/^\/(new|reset)/i)?.[1]?.toLowerCase() ?? "new") : null;
+
+      await finalizeBotStream({
         streamStore,
         target,
-        accountId: account.accountId,
-        config,
-        msg,
         streamId,
-        rawBody,
         chatType,
-        userId,
         core,
-        tableMode,
+        config,
+        accountId: account.accountId,
+        isResetCommand,
+        resetCommandKind,
+        logInfo,
         logVerbose,
-        truncateUtf8Bytes,
         recordBotOperationalEvent,
-      }),
-    });
-
-    const rawBodyNormalized = rawBody.trim();
-    const isResetCommand = /^\/(new|reset)(?:\s|$)/i.test(rawBodyNormalized);
-    const resetCommandKind = isResetCommand ? (rawBodyNormalized.match(/^\/(new|reset)/i)?.[1]?.toLowerCase() ?? "new") : null;
-
-    await finalizeBotStream({
-      streamStore,
-      target,
-      streamId,
-      chatType,
-      core,
-      config,
-      accountId: account.accountId,
-      isResetCommand,
-      resetCommandKind,
-      logInfo,
-      logVerbose,
-      recordBotOperationalEvent,
-    });
+      });
+    } finally {
+      if (proactiveFallbackTimer) {
+        clearTimeout(proactiveFallbackTimer);
+        proactiveFallbackTimer = null;
+      }
+    }
   }
 
   return {
