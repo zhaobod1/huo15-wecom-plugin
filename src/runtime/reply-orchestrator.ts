@@ -31,13 +31,13 @@ export async function dispatchRuntimeReply(params: {
   const result = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: session.ctx,
     cfg,
-    replyOptions:
-      replyHandle.context.transport === "bot-ws"
-        ? {
-            // WS bot replies should emit block updates instead of waiting for a final-only flush.
-            disableBlockStreaming: false,
-          }
-        : undefined,
+    replyOptions: {
+      // WS bot replies should emit block updates instead of waiting for a final-only flush.
+      disableBlockStreaming: replyHandle.context.transport === "bot-ws" ? false : undefined,
+      // 2026.4.27 默认对群聊启用 message_tool_only，导致所有 reply blocks 被丢弃。
+      // 强制设为 "automatic" 确保群聊回复正常投递到企微。
+      sourceReplyDeliveryMode: "automatic",
+    },
     dispatcherOptions: {
       deliver: async (payload, info) => {
         await dispatchReplyPayload({
@@ -51,6 +51,7 @@ export async function dispatchRuntimeReply(params: {
       },
     },
   });
+
 
   if (
     replyHandle.context.transport === "bot-ws" &&
