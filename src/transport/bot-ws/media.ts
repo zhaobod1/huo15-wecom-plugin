@@ -340,6 +340,43 @@ async function trySendShareFallbackOnReject(params: {
   };
 }
 
+/**
+ * v2.8.16: WS 层 upload/send 抛错时的 share 兜底
+ *
+ * 场景：buffer 已经在内存里（resolveMediaFile 成功），但 wsClient.uploadMedia /
+ * sendMediaMessage / replyMedia 抛错——典型如 SDK 内部 5s ack timeout
+ * （`Reply ack timeout (5000ms) for reqId: aibot_upload_media_init_...`）、
+ * WS 短暂断连、企微服务抖动。
+ *
+ * 这些场景里文件本身合法（不超过 size limit、buffer 完整），重试上传不一定
+ * 立即恢复（SDK 内部已经有 watchdog），但 share 链接是稳态——直接把 buffer
+ * 落盘到 ~/.openclaw/share/files 让用户拿到下载链接，体验远好于"上传失败请重试"。
+ *
+ * 这跟 size-limit 触发的 trySendShareFallbackOnReject 是同一个底层调用，
+ * 只是触发时机从"显式拒绝"扩到"隐式失败"。
+ */
+async function shareFallbackOnUploadError(params: {
+  wsClient: WSClient;
+  chatId?: string;
+  frame?: WsFrameHeaders;
+  media: ResolvedMediaFile;
+  sizeCheck: FileSizeCheckResult;
+  error: unknown;
+  shareConfig?: ShareFallbackConfig;
+}): Promise<BotWsMediaSendResult> {
+  const errMsg = params.error instanceof Error ? params.error.message : String(params.error);
+  return await trySendShareFallbackOnReject({
+    wsClient: params.wsClient,
+    chatId: params.chatId,
+    frame: params.frame,
+    buffer: params.media.buffer,
+    fileName: params.media.fileName,
+    rejectReason: `企微 WS 上传/发送失败（已自动 share 兜底）：${errMsg}`,
+    finalType: params.sizeCheck.finalType,
+    shareConfig: params.shareConfig,
+  });
+}
+
 export async function uploadAndSendBotWsMedia(params: {
   wsClient: WSClient;
   mediaUrl: string;
@@ -348,10 +385,12 @@ export async function uploadAndSendBotWsMedia(params: {
   maxBytes?: number;
   shareFallbackConfig?: ShareFallbackConfig;
 }): Promise<BotWsMediaSendResult> {
+  let media: ResolvedMediaFile | undefined;
+  let sizeCheck: FileSizeCheckResult | undefined;
   try {
-    const media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
+    media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
     const detectedType = detectWeComMediaType(media.contentType);
-    const sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
+    sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
     if (sizeCheck.shouldReject) {
       return await trySendShareFallbackOnReject({
         wsClient: params.wsClient,
@@ -382,6 +421,16 @@ export async function uploadAndSendBotWsMedia(params: {
       downgradeNote: sizeCheck.downgradeNote,
     };
   } catch (error) {
+    if (media && sizeCheck) {
+      return await shareFallbackOnUploadError({
+        wsClient: params.wsClient,
+        chatId: params.chatId,
+        media,
+        sizeCheck,
+        error,
+        shareConfig: params.shareFallbackConfig,
+      });
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
@@ -397,10 +446,12 @@ export async function uploadAndReplyBotWsMedia(params: {
   maxBytes?: number;
   shareFallbackConfig?: ShareFallbackConfig;
 }): Promise<BotWsMediaSendResult> {
+  let media: ResolvedMediaFile | undefined;
+  let sizeCheck: FileSizeCheckResult | undefined;
   try {
-    const media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
+    media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
     const detectedType = detectWeComMediaType(media.contentType);
-    const sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
+    sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
     if (sizeCheck.shouldReject) {
       return await trySendShareFallbackOnReject({
         wsClient: params.wsClient,
@@ -431,6 +482,16 @@ export async function uploadAndReplyBotWsMedia(params: {
       downgradeNote: sizeCheck.downgradeNote,
     };
   } catch (error) {
+    if (media && sizeCheck) {
+      return await shareFallbackOnUploadError({
+        wsClient: params.wsClient,
+        frame: params.frame,
+        media,
+        sizeCheck,
+        error,
+        shareConfig: params.shareFallbackConfig,
+      });
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),

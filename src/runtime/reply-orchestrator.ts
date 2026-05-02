@@ -31,13 +31,15 @@ export async function dispatchRuntimeReply(params: {
   const result = await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: session.ctx,
     cfg,
+    // sourceReplyDeliveryMode 在某次 openclaw SDK 升级里从 GetReplyOptions 类型签名移除了，
+    // 但 runtime 仍消费此字段（覆盖 2026.4.27 群聊默认 message_tool_only 导致 reply blocks
+    // 被丢弃的问题）。as cast 绕过 EPC，等 SDK 类型补回再清理。
     replyOptions: {
-      // WS bot replies should emit block updates instead of waiting for a final-only flush.
       disableBlockStreaming: replyHandle.context.transport === "bot-ws" ? false : undefined,
-      // 2026.4.27 默认对群聊启用 message_tool_only，导致所有 reply blocks 被丢弃。
-      // 强制设为 "automatic" 确保群聊回复正常投递到企微。
       sourceReplyDeliveryMode: "automatic",
-    },
+    } as Parameters<
+      typeof core.channel.reply.dispatchReplyWithBufferedBlockDispatcher
+    >[0]["replyOptions"],
     dispatcherOptions: {
       deliver: async (payload, info) => {
         await dispatchReplyPayload({
