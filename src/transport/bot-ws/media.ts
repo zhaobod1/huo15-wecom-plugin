@@ -8,6 +8,11 @@ import {
   detectMime,
   fetchRemoteMedia,
 } from "openclaw/plugin-sdk/media-runtime";
+import {
+  formatShareFallbackText,
+  shareFallback,
+  type ShareFallbackConfig,
+} from "../../share-fallback.js";
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 10 * 1024 * 1024;
@@ -30,6 +35,8 @@ export type BotWsMediaSendResult = {
   rejectReason?: string;
   downgraded?: boolean;
   downgradeNote?: string;
+  /** v2.8.15: 通过 enhance bot-share 兜底发的下载链接 URL（ok=true 时附带，便于上层日志/审计） */
+  shareUrl?: string;
   error?: string;
 };
 
@@ -234,24 +241,127 @@ async function resolveMediaFile(
   };
 }
 
+/**
+ * v2.8.15: 大文件上传被拒时尝试 enhance bot-share 兜底。
+ * 把 buffer 写到 ~/.openclaw/share/files/<token>-<basename> + manifest，
+ * 由 @huo15/openclaw-enhance v5.7.22+ 注册的 /plugins/enhance-share/* HTTP route 提供下载。
+ *
+ * 行为：
+ *   1. 写盘成功（fallback.ok=true）→ 视情况主动 sendMessage 把链接 markdown 推到目标 chatId
+ *      （能拿到 chatId 的路径：sendMedia 直推 / reply 路径用 body.from.userid 兜底）
+ *   2. 主动发送成功 → 返回 ok:true + 短 downgradeNote（"已通过分享链接发送"），让 reply 路径的
+ *      finalText 拼接也能看到
+ *   3. 主动发送失败 / 拿不到目标 → 把整段 markdown 文本塞进 downgradeNote 让 reply.ts 在最终消息里输出
+ *   4. 写盘失败 → 保留原 reject 行为
+ */
+async function trySendShareFallbackOnReject(params: {
+  wsClient: WSClient;
+  chatId?: string;
+  frame?: WsFrameHeaders;
+  buffer: Buffer;
+  fileName: string;
+  rejectReason: string;
+  finalType: WeComMediaType;
+  shareConfig?: ShareFallbackConfig;
+}): Promise<BotWsMediaSendResult> {
+  const fallback = shareFallback({
+    buffer: params.buffer,
+    fileName: params.fileName,
+    label: params.fileName,
+    config: params.shareConfig,
+  });
+  if (!fallback.ok) {
+    return {
+      ok: false,
+      rejected: true,
+      rejectReason: `${params.rejectReason}（share 兜底也失败：${fallback.error}）`,
+      finalType: params.finalType,
+    };
+  }
+
+  const fullText = formatShareFallbackText({
+    fileName: params.fileName,
+    fileSizeBytes: params.buffer.length,
+    result: fallback,
+  });
+
+  let targetChatId: string | undefined = params.chatId;
+  if (!targetChatId && params.frame) {
+    const body = (params.frame as { body?: { chattype?: string; chatid?: string; from?: { userid?: string } } }).body;
+    if (body) {
+      targetChatId =
+        body.chattype === "group"
+          ? body.chatid || body.from?.userid
+          : body.from?.userid;
+    }
+  }
+
+  const sizeMB = (params.buffer.length / 1024 / 1024).toFixed(1);
+  const shortNote = `📎 大文件已通过分享链接发送（${sizeMB}MB → ${fallback.url}，${
+    fallback.baseUrlIsFallback ? "⚠ baseUrl=localhost，请配 BOT_BASE_URL 公网地址" : "24h 后过期"
+  }）`;
+
+  if (targetChatId) {
+    try {
+      const messagePayload = {
+        msgtype: "markdown_v2",
+        markdown_v2: { content: fullText },
+      } as unknown as Parameters<typeof params.wsClient.sendMessage>[1];
+      await params.wsClient.sendMessage(targetChatId, messagePayload);
+      return {
+        ok: true,
+        messageId: `wecom-share-fallback-${Date.now()}`,
+        finalType: params.finalType,
+        downgraded: true,
+        downgradeNote: shortNote,
+        shareUrl: fallback.url,
+      };
+    } catch (sendErr) {
+      // sendMessage 失败但 share 已落盘 → 把完整 URL 塞进 downgradeNote，由 reply.ts 拼到最终回复
+      return {
+        ok: true,
+        messageId: `wecom-share-fallback-${Date.now()}`,
+        finalType: params.finalType,
+        downgraded: true,
+        downgradeNote: `${fullText}\n\n（自动 sendMessage 失败：${(sendErr as Error).message}）`,
+        shareUrl: fallback.url,
+      };
+    }
+  }
+
+  // 拿不到 chatId（既没传 chatId 也没在 frame.body 里找到 userid）→ 把完整文本通过 downgradeNote 透传
+  return {
+    ok: true,
+    messageId: `wecom-share-fallback-${Date.now()}`,
+    finalType: params.finalType,
+    downgraded: true,
+    downgradeNote: fullText,
+    shareUrl: fallback.url,
+  };
+}
+
 export async function uploadAndSendBotWsMedia(params: {
   wsClient: WSClient;
   mediaUrl: string;
   chatId: string;
   mediaLocalRoots?: readonly string[];
   maxBytes?: number;
+  shareFallbackConfig?: ShareFallbackConfig;
 }): Promise<BotWsMediaSendResult> {
   try {
     const media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
     const detectedType = detectWeComMediaType(media.contentType);
     const sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
     if (sizeCheck.shouldReject) {
-      return {
-        ok: false,
-        rejected: true,
-        rejectReason: sizeCheck.rejectReason,
+      return await trySendShareFallbackOnReject({
+        wsClient: params.wsClient,
+        chatId: params.chatId,
+        buffer: media.buffer,
+        fileName: media.fileName,
+        rejectReason: sizeCheck.rejectReason ?? "wecom 大小限制",
         finalType: sizeCheck.finalType,
-      };
+        shareConfig: params.shareFallbackConfig,
+      });
     }
 
     const uploadResult = await params.wsClient.uploadMedia(media.buffer, {
@@ -285,18 +395,22 @@ export async function uploadAndReplyBotWsMedia(params: {
   mediaUrl: string;
   mediaLocalRoots?: readonly string[];
   maxBytes?: number;
+  shareFallbackConfig?: ShareFallbackConfig;
 }): Promise<BotWsMediaSendResult> {
   try {
     const media = await resolveMediaFile(params.mediaUrl, params.mediaLocalRoots, params.maxBytes);
     const detectedType = detectWeComMediaType(media.contentType);
     const sizeCheck = applyFileSizeLimits(media.buffer.length, detectedType, media.contentType);
     if (sizeCheck.shouldReject) {
-      return {
-        ok: false,
-        rejected: true,
-        rejectReason: sizeCheck.rejectReason,
+      return await trySendShareFallbackOnReject({
+        wsClient: params.wsClient,
+        frame: params.frame,
+        buffer: media.buffer,
+        fileName: media.fileName,
+        rejectReason: sizeCheck.rejectReason ?? "wecom 大小限制",
         finalType: sizeCheck.finalType,
-      };
+        shareConfig: params.shareFallbackConfig,
+      });
     }
 
     const uploadResult = await params.wsClient.uploadMedia(media.buffer, {

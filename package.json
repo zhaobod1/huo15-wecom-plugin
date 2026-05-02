@@ -1,7 +1,7 @@
 {
   "name": "@huo15/wecom",
-  "version": "2.8.14",
-  "description": "OpenClaw 企业微信（WeCom）插件，默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换",
+  "version": "2.8.15",
+  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.15 — 大文件上传被 wecom 20MB 上限拒后自动接 @huo15/openclaw-enhance bot-share 兜底：把 buffer 写到 ~/.openclaw/share/files/ 并通过 enhance 的 /plugins/enhance-share/<token>-<filename> route 提供下载链接，markdown_v2 推回会话，UX 从'文件大小超过 20MB 无法发送'升级为'已通过分享链接发送 → URL'。继承 v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
   "license": "ISC",
   "author": "YanHaidao (VX: YanHaidao)",
   "repository": {
