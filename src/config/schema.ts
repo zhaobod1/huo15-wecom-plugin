@@ -37,6 +37,14 @@ export interface BotConfig {
   primaryTransport?: "ws" | "webhook";
   streamPlaceholderContent?: string;
   welcomeText?: string;
+  /**
+   * v2.8.17+：长任务进度反馈模式。默认 "progress"。仅 bot-ws 生效。
+   */
+  progressMode?: "progress" | "heartbeat" | "delayed" | "off";
+  /**
+   * v2.8.17+：progressMode="delayed" 时的沉默时长（毫秒）。默认 30000。
+   */
+  progressDelayedMs?: number;
   dm?: DmConfig;
   aibotid?: string;
   botIds?: string[];

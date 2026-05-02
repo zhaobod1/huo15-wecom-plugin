@@ -1,5 +1,13 @@
 export type WecomDmPolicy = "open" | "pairing" | "allowlist" | "disabled";
 export type WecomBotPrimaryTransport = "ws" | "webhook";
+/**
+ * 长任务进度反馈模式（v2.8.17+）
+ * - "progress"（默认）：阶段化心跳文案，按已等待时长升级（思考中 → 处理中(30s) → 任务较复杂(1m) → 仍在执行(2m+)，完成后会主动推送）
+ * - "heartbeat"：v2.8.16 及之前的固定"⏳ 正在思考中..."，每 3s 重发，120s 后停
+ * - "delayed"：默认沉默；超过 30s（可由 progressDelayedMs 调整）才发 1 条提示，不循环
+ * - "off"：完全不发占位（高级用户用，依赖 LLM partial chunk 自身可见性）
+ */
+export type WecomProgressMode = "progress" | "heartbeat" | "delayed" | "off";
 
 export type WecomDmConfig = {
   policy?: WecomDmPolicy;
@@ -40,6 +48,15 @@ export type WecomBotConfig = {
   primaryTransport?: WecomBotPrimaryTransport;
   streamPlaceholderContent?: string;
   welcomeText?: string;
+  /**
+   * v2.8.17+：长任务进度反馈模式。默认 "progress"（阶段化文案）。
+   * 仅 bot-ws 通道生效；bot-webhook 自有 long-task rescue 机制（v2.8.14）。
+   */
+  progressMode?: WecomProgressMode;
+  /**
+   * v2.8.17+：progressMode="delayed" 时，沉默多少毫秒后发提示。默认 30000（30s）。
+   */
+  progressDelayedMs?: number;
   dm?: WecomDmConfig;
   /**
    * Deprecated compatibility fields kept only while old webhook helpers are

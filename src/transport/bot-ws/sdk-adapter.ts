@@ -236,6 +236,8 @@ export class BotWsSdkAdapter {
         accountId: this.runtime.account.accountId,
         inboundKind: event.inboundKind,
         placeholderContent: botAccount.config.streamPlaceholderContent,
+        progressMode: botAccount.config.progressMode,
+        progressDelayedMs: botAccount.config.progressDelayedMs,
         autoSendPlaceholder:
           event.inboundKind === "text" ||
           event.inboundKind === "image" ||

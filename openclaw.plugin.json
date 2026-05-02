@@ -65,6 +65,22 @@
               "welcomeText": {
                 "type": "string"
               },
+              "progressMode": {
+                "type": "string",
+                "enum": [
+                  "progress",
+                  "heartbeat",
+                  "delayed",
+                  "off"
+                ],
+                "default": "progress",
+                "description": "v2.8.17+ 长任务进度反馈模式（仅 bot-ws）：progress（默认，按已等待时长升级文案）/ heartbeat（v2.8.16 及之前的固定'⏳ 正在思考中…'每 3s 重发）/ delayed（默认沉默，progressDelayedMs 之后发一次）/ off（完全不发占位）"
+              },
+              "progressDelayedMs": {
+                "type": "number",
+                "default": 30000,
+                "description": "v2.8.17+ progressMode=delayed 时的沉默时长（毫秒）。默认 30000（30s）。"
+              },
               "aibotid": {
                 "type": "string"
               },

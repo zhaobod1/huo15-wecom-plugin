@@ -346,32 +346,62 @@ describe("createBotWsReplyHandle", () => {
     );
   });
 
-  it("swallows expired stream update errors during delivery", async () => {
-    const expiredError = {
-      headers: { req_id: "req-expired" },
-      errcode: 846608,
-      errmsg: "stream message update expired (>6 minutes), cannot update",
-    };
-    mockClient.replyStream.mockRejectedValueOnce(expiredError);
-    const onFail = vi.fn();
-
-    const handle = createBotWsReplyHandle({
-      client: mockClient,
-      frame: {
+  // v2.8.17 ⭐ 长任务结果回流修复：reqId 失效 / 流过期不再短路 onFail，
+  // 改为走 sendMessage 主动推送 fallback。详见 changelog/v2.8.17.md
+  it.each([
+    [
+      "stream-expired",
+      {
         headers: { req_id: "req-expired" },
-        body: {},
-      } as unknown as ReplyHandleParams["frame"],
-      accountId: "default",
-      inboundKind: "text",
-      autoSendPlaceholder: false,
-      onFail,
-    });
+        errcode: 846608,
+        errmsg: "stream message update expired (>6 minutes), cannot update",
+      },
+    ],
+    [
+      "invalid-req-id",
+      {
+        headers: { req_id: "req-invalid" },
+        errcode: 846605,
+        errmsg: "invalid req_id",
+      },
+    ],
+  ])(
+    "falls back to active push when reply channel is closed by %s during final delivery",
+    async (_label, replyChannelError) => {
+      mockClient.replyStream.mockRejectedValueOnce(replyChannelError);
+      const onFail = vi.fn();
+      const onDeliver = vi.fn();
 
-    await handle.deliver({ text: "最终回复", isReasoning: false }, { kind: "final" });
+      const handle = createBotWsReplyHandle({
+        client: mockClient,
+        frame: {
+          headers: { req_id: String(replyChannelError.headers.req_id) },
+          body: { from: { userid: "alice" }, chattype: "single" },
+        } as unknown as ReplyHandleParams["frame"],
+        accountId: "default",
+        inboundKind: "text",
+        autoSendPlaceholder: false,
+        onFail,
+        onDeliver,
+      });
 
-    expect(mockClient.replyStream).toHaveBeenCalledTimes(1);
-    expect(onFail).toHaveBeenCalledWith(expiredError);
-  });
+      await handle.deliver({ text: "最终回复", isReasoning: false }, { kind: "final" });
+
+      // 1) tried replyStream once, got reply-channel-closed error
+      expect(mockClient.replyStream).toHaveBeenCalledTimes(1);
+      // 2) fell back to sendMessage active push so the result actually reaches the user
+      expect(mockClient.sendMessage).toHaveBeenCalledWith(
+        "alice",
+        expect.objectContaining({
+          msgtype: "markdown_v2",
+          markdown_v2: expect.objectContaining({ content: "最终回复" }),
+        }),
+      );
+      // 3) onDeliver fired (success), onFail NOT fired (the bug we just fixed)
+      expect(onDeliver).toHaveBeenCalled();
+      expect(onFail).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [{ headers: { req_id: "req-invalid" }, errcode: 846605, errmsg: "invalid req_id" }],
@@ -448,5 +478,132 @@ describe("createBotWsReplyHandle", () => {
         text: { content: "Hello Bob" },
       },
     );
+  });
+
+  // ── v2.8.17 progressMode tests ──
+
+  it("progressMode=off never sends a placeholder, even after long wait", async () => {
+    createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-progress-off" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      progressMode: "off",
+    });
+    vi.advanceTimersByTime(120_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClient.replyStream).not.toHaveBeenCalled();
+  });
+
+  it("progressMode=delayed stays silent until progressDelayedMs, then fires once", async () => {
+    createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-progress-delayed" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      progressMode: "delayed",
+      progressDelayedMs: 5_000,
+    });
+
+    // 4s — still silent
+    vi.advanceTimersByTime(4_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClient.replyStream).not.toHaveBeenCalled();
+
+    // 6s — fired exactly once
+    vi.advanceTimersByTime(2_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClient.replyStream).toHaveBeenCalledTimes(1);
+
+    // 16s+ — still only one (no looping)
+    vi.advanceTimersByTime(10_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClient.replyStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("progressMode=heartbeat uses the legacy fixed text on every keepalive tick", async () => {
+    createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-progress-heartbeat" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      progressMode: "heartbeat",
+    });
+    vi.advanceTimersByTime(0);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    vi.advanceTimersByTime(3_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    vi.advanceTimersByTime(3_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(mockClient.replyStream.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of mockClient.replyStream.mock.calls) {
+      // every keepalive tick uses the same legacy text
+      expect(call[2]).toBe("⏳ 正在思考中...\n\n");
+    }
+  });
+
+  it("progressMode=progress (default) escalates placeholder text as elapsed time crosses tiers", async () => {
+    const flush = async () => {
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+
+    createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-progress-progress" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      // progressMode default → "progress"
+    });
+
+    // 推进 130s（>120s 安全边界），每 3s flush 一次让 placeholderInFlight 释放
+    // 否则一次性推进会让 keepalive 锁住，后续 tick 全 skip
+    await flush();
+    for (let i = 0; i < 50; i++) {
+      vi.advanceTimersByTime(3_000);
+      await flush();
+    }
+
+    const allTexts = mockClient.replyStream.mock.calls.map((c) => String(c[2]));
+    // 阶段化文案应该都出现过（不强约束顺序，避免 timer 触发顺序变更带来的脆弱性）
+    expect(allTexts.some((t) => t.includes("正在思考中"))).toBe(true);
+    expect(allTexts.some((t) => t.includes("仍在处理中"))).toBe(true);
+    expect(allTexts.some((t) => t.includes("任务较复杂"))).toBe(true);
+    expect(allTexts.some((t) => t.includes("完成后会主动推送结果"))).toBe(true);
+  });
+
+  it("explicit placeholderContent overrides progressMode escalation (legacy behaviour preserved)", async () => {
+    createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-override" },
+        body: {},
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      placeholderContent: "Custom 等等...",
+      progressMode: "progress",
+    });
+    vi.advanceTimersByTime(0);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    vi.advanceTimersByTime(40_000);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    for (const call of mockClient.replyStream.mock.calls) {
+      // override always wins regardless of elapsed time
+      expect(call[2]).toBe("Custom 等等...");
+    }
   });
 });

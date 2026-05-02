@@ -1,7 +1,7 @@
 ---
 name: huo15-wecom
-description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.16 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.16 hotfix：WS upload/send 抛错（如 SDK 5s ack timeout）自动走 enhance share 链接兜底，文件不再因企微 WS 抖动直接失败。继承 v2.8.15 大文件 share-fallback、v2.8.8 WS BOT 图片三件套修复。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
-version: 2.8.16
+description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.17 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.17 重点：(1) 长任务结果回流修复——reqId 失效（846605）/ 流过期（846608）不再短路 onFail，降级 sendMessage 主动推送+Agent API 两层 fallback；(2) 新增 progressMode 配置（progress/heartbeat/delayed/off，默认 progress）让长任务期间显示阶段化文案。继承 v2.8.16 enhance share 兜底、v2.8.8 WS BOT 图片三件套修复。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
+version: 2.8.17
 homepage: https://cnb.cool/huo15/ai/huo15-wecom-plugin
 metadata: { "openclaw": { "emoji": "🦜", "requires": { "bins": [] } } }
 ---

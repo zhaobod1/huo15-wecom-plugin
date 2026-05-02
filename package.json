@@ -1,7 +1,7 @@
 {
   "name": "@huo15/wecom",
-  "version": "2.8.16",
-  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.16 hotfix — WS upload/send 抛错（如 SDK 内部 5s ack timeout、WS 抖动）也自动走 enhance share 兜底：buffer 已在内存就不再因 'Reply ack timeout (5000ms)' 直接失败，而是落盘到 ~/.openclaw/share/files/ 返回下载链接。顺便清理 reply-orchestrator 预存 SDK 类型 drift（sourceReplyDeliveryMode）让 typecheck 通过。继承 v2.8.15 size-limit share-fallback、v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
+  "version": "2.8.17",
+  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.17 — 长任务结果回流修复 + 进度反馈可配置：bot-ws 在 reqId 失效（errcode 846605）/ 流过期（846608）时不再短路 onFail 丢消息，而是降级到 sendMessage 主动推送 + Agent API 两层 fallback；新增 channels.wecom.bot.progressMode（progress/heartbeat/delayed/off，默认 progress）让长任务期间显示阶段化文案。继承 v2.8.16 enhance share 兜底、v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
   "license": "ISC",
   "author": "YanHaidao (VX: YanHaidao)",
   "repository": {

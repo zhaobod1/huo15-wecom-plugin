@@ -9,12 +9,33 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
 import { getAccountRuntime, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
+import type { WecomProgressMode } from "../../types/config.js";
 import { toWeComMarkdownV2 } from "../../wecom_msg_adapter/markdown_adapter.js";
 import { uploadAndReplyBotWsMedia } from "./media.js";
 import { sendAgentApiText } from "../agent-api/client.js";
 
 const PLACEHOLDER_KEEPALIVE_MS = 3000;
 const MAX_KEEPALIVE_MS = 120 * 1000; // Force stop keepalive after 120s if ignored
+const DEFAULT_PROGRESS_MODE: WecomProgressMode = "progress";
+const DEFAULT_PROGRESS_DELAYED_MS = 30_000;
+const HEARTBEAT_DEFAULT_TEXT = "⏳ 正在思考中...\n\n";
+
+// v2.8.17 ⭐ 阶段化 placeholder 文案（progressMode="progress"）
+function buildProgressPlaceholder(elapsedMs: number): string {
+  if (elapsedMs < 30_000) {
+    return "⏳ 正在思考中...\n\n";
+  }
+  if (elapsedMs < 60_000) {
+    const sec = Math.floor(elapsedMs / 1000);
+    return `⏳ 仍在处理中（已 ${sec}s）...\n\n`;
+  }
+  if (elapsedMs < 120_000) {
+    const min = Math.floor(elapsedMs / 60_000);
+    return `⏳ 任务较复杂（已 ${min}m），请稍候...\n\n`;
+  }
+  const min = Math.floor(elapsedMs / 60_000);
+  return `⏳ 任务仍在执行（已 ${min}m+），完成后会主动推送结果。\n\n`;
+}
 // v2.8.5 ⭐ partial streaming cap — limit fire-and-forget partial replyStream calls to
 // avoid SDK reply queue saturation (each pending partial waits ~5s for WS ack).
 // Excess block chunks are silently accumulated and flushed in the final reply.
@@ -117,6 +138,14 @@ export function createBotWsReplyHandle(params: {
   inboundKind: string;
   placeholderContent?: string;
   autoSendPlaceholder?: boolean;
+  /**
+   * v2.8.17+ 长任务进度反馈模式。默认 "progress"。
+   */
+  progressMode?: WecomProgressMode;
+  /**
+   * v2.8.17+ progressMode="delayed" 时的沉默时长（毫秒）。默认 30000。
+   */
+  progressDelayedMs?: number;
   onDeliver?: () => void;
   onFail?: (error: unknown) => void;
   onReconnectNeeded?: (accountId: string) => void;
@@ -129,7 +158,23 @@ export function createBotWsReplyHandle(params: {
     return streamId;
   };
 
-  const placeholderText = params.placeholderContent?.trim() || "⏳ 正在思考中...\n\n";
+  // v2.8.17 ⭐ progressMode 决定 placeholder 文案策略
+  const progressMode: WecomProgressMode = params.progressMode ?? DEFAULT_PROGRESS_MODE;
+  const progressDelayedMs = Math.max(
+    0,
+    params.progressDelayedMs ?? DEFAULT_PROGRESS_DELAYED_MS,
+  );
+  // 显式 placeholderContent 覆盖优先级最高（兼容老 config）；否则用 heartbeat 默认
+  const overridePlaceholderText = params.placeholderContent?.trim();
+  const startedAt = Date.now();
+  const computeCurrentPlaceholder = (): string => {
+    if (overridePlaceholderText) return overridePlaceholderText;
+    if (progressMode === "progress") {
+      return buildProgressPlaceholder(Date.now() - startedAt);
+    }
+    return HEARTBEAT_DEFAULT_TEXT;
+  };
+
   let streamSettled = false;
   let placeholderInFlight = false;
   let placeholderKeepalive: ReturnType<typeof setInterval> | undefined;
@@ -184,9 +229,10 @@ export function createBotWsReplyHandle(params: {
 
   const sendPlaceholder = () => {
     if (streamSettled || placeholderInFlight || isEvent) return;
+    if (progressMode === "off") return;
     placeholderInFlight = true;
     params.client
-      .replyStream(params.frame, resolveStreamId(), placeholderText, false)
+      .replyStream(params.frame, resolveStreamId(), computeCurrentPlaceholder(), false)
       .catch((error) => {
         if (!isTerminalReplyError(error)) {
           return;
@@ -257,17 +303,31 @@ export function createBotWsReplyHandle(params: {
     }
   };
 
-  if (params.autoSendPlaceholder !== false && !isEvent) {
-    sendPlaceholder();
-    placeholderKeepalive = setInterval(() => {
+  if (params.autoSendPlaceholder !== false && !isEvent && progressMode !== "off") {
+    if (progressMode === "delayed") {
+      // v2.8.17 ⭐ "delayed" 模式：默认沉默；progressDelayedMs 之后单次发，不循环
+      placeholderTimeout = setTimeout(() => {
+        sendPlaceholder();
+        placeholderTimeout = undefined;
+      }, progressDelayedMs);
+    } else {
+      // "progress" / "heartbeat" 模式：立即发 + 每 PLACEHOLDER_KEEPALIVE_MS 重发
       sendPlaceholder();
-    }, PLACEHOLDER_KEEPALIVE_MS);
+      placeholderKeepalive = setInterval(() => {
+        sendPlaceholder();
+      }, PLACEHOLDER_KEEPALIVE_MS);
 
-    // Safety net: force stop keepalive after MAX_KEEPALIVE_MS
-    // in case the message is completely ignored by the core and never triggers deliver/fail
-    placeholderTimeout = setTimeout(() => {
-      stopPlaceholderKeepalive();
-    }, MAX_KEEPALIVE_MS);
+      // Safety net: force stop keepalive after MAX_KEEPALIVE_MS
+      // in case the message is completely ignored by the core and never triggers deliver/fail
+      placeholderTimeout = setTimeout(() => {
+        // v2.8.17 ⭐ "progress" 模式：在停止前再发一条最终档文案让用户安心
+        // （已 2m+，完成后会主动推送结果）
+        if (progressMode === "progress") {
+          sendPlaceholder();
+        }
+        stopPlaceholderKeepalive();
+      }, MAX_KEEPALIVE_MS);
+    }
 
     // Register keepalive
     let keepalives = activeKeepalivesByPeer.get(peerId);
@@ -478,6 +538,12 @@ export function createBotWsReplyHandle(params: {
         // Fallback tiers: Bot WS active push → Agent API.
         const isWsTimeout = error instanceof Error &&
           (error.message.includes("ack timeout") || error.message.includes("timed out"));
+        // v2.8.17 ⭐ 长任务结果回流修复：reqId 失效 / 流过期 ≠ 全死。
+        // SDK 的 replyStream 通道（绑定 inbound req_id）已关闭，但
+        // sendMessage 主动推送 / Agent API 是独立通道，仍能把已生成的内容送出去。
+        // 之前直接 onFail 会让用户看到"OpenClaw UI 有结果，但企微一直停在'思考中…'"。
+        const isReplyChannelDead =
+          isInvalidReqIdError(error) || isExpiredStreamUpdateError(error);
         if (isWsTimeout) {
           hitAckTimeoutWatchdog({
             accountId: params.accountId,
@@ -486,9 +552,10 @@ export function createBotWsReplyHandle(params: {
           console.warn(
             `[wecom-ws] ${error instanceof Error ? error.message : String(error)} for ${peerId}, trying fallback`,
           );
-        } else if (isTerminalReplyError(error)) {
-          params.onFail?.(error);
-          return;
+        } else if (isReplyChannelDead) {
+          console.warn(
+            `[wecom-ws] reply channel closed (${error instanceof Error ? error.message : String(error)}) for ${peerId}, trying active push fallback`,
+          );
         } else {
           console.warn(
             `[wecom-ws] WS delivery failed for ${peerId}: ${error instanceof Error ? error.message : String(error)}, trying fallback`,
