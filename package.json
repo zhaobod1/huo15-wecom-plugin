@@ -1,7 +1,7 @@
 {
   "name": "@huo15/wecom",
-  "version": "2.8.17",
-  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.17 — 长任务结果回流修复 + 进度反馈可配置：bot-ws 在 reqId 失效（errcode 846605）/ 流过期（846608）时不再短路 onFail 丢消息，而是降级到 sendMessage 主动推送 + Agent API 两层 fallback；新增 channels.wecom.bot.progressMode（progress/heartbeat/delayed/off，默认 progress）让长任务期间显示阶段化文案。继承 v2.8.16 enhance share 兜底、v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
+  "version": "2.8.18",
+  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.18 — chore-only release：注册 ClawHub plugin tag，让 `openclaw plugins install @huo15/wecom`（不带版本号）走 ClawHub 协议解析也能装上。wecom 历史所有版本 pluginApi 全部 >=2026.3.23 ranged，不会重蹈 enhance 5.7.9 bare pluginApi 冻结成 ghost manifest 的覆辙。继承 v2.8.17 长任务结果回流修复 + progressMode、v2.8.16 share 兜底、v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
   "license": "ISC",
   "author": "YanHaidao (VX: YanHaidao)",
   "repository": {
