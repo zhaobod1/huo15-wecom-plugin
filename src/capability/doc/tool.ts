@@ -252,6 +252,7 @@ async function inspectWecomShareLink(params: { shareUrl: string }) {
       "user-agent": "OpenClaw-Wechat/1.0",
       accept: "text/html,application/xhtml+xml",
     },
+    signal: AbortSignal.timeout(10000),
   });
   const contentType = response.headers?.get("content-type") || "";
   const html = await response.text();
@@ -493,7 +494,9 @@ export function registerWecomDocTools(api: OpenClawPluginApi) {
                       console.log(
                         `[wecom-doc] Downloading remote image: ${imageSource.substring(0, 50)}...`,
                       );
-                      const response = await fetch(imageSource);
+                      const response = await fetch(imageSource, {
+                        signal: AbortSignal.timeout(10000),
+                      });
                       if (!response.ok) {
                         throw new Error(
                           `Failed to download image: ${response.status} ${response.statusText}`,
