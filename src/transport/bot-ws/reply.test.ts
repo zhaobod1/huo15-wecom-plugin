@@ -700,4 +700,61 @@ describe("createBotWsReplyHandle", () => {
     );
     expect(allMediaCalls).toEqual(["/tmp/1.pdf", "/tmp/2.zip", "/tmp/3.png"]);
   });
+
+  // ── v2.8.21 — 诊断 log（区分"LLM 没 emit / emit 了被 parse / emit 了但格式错"三态）─
+  it("v2.8.21: logs '[wecom-ws] MEDIA directive(s) detected' when parser successfully extracts", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-log-detected" },
+        body: { from: { userid: "ZhaoBo" }, chattype: "group", chatid: "wrTestChat" },
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    await handle.deliver(
+      { text: "请查收：\nMEDIA: /tmp/a.zip", isReasoning: false },
+      { kind: "final" },
+    );
+
+    const detected = logSpy.mock.calls.find((c) =>
+      String(c[0]).includes("MEDIA directive(s) detected via reply.deliver"),
+    );
+    expect(detected).toBeDefined();
+    expect(String(detected?.[0])).toContain("count=1");
+    expect(String(detected?.[0])).toContain("peer=group:wrTestChat");
+    logSpy.mockRestore();
+  });
+
+  it("v2.8.21: warns when 'MEDIA:' substring present but no directive line matched (LLM 写错格式)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-log-warn" },
+        body: { from: { userid: "ZhaoBo" }, chattype: "single" },
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    // LLM 把 MEDIA: 嵌入正文中部（错误格式）—— parser 不抽取，但 warn log 提示
+    await handle.deliver(
+      { text: "📎 MEDIA: /tmp/foo.zip 已经准备好啦", isReasoning: false },
+      { kind: "final" },
+    );
+
+    const warned = warnSpy.mock.calls.find((c) =>
+      String(c[0]).includes("MEDIA: substring present but no directive line matched"),
+    );
+    expect(warned).toBeDefined();
+    expect(String(warned?.[0])).toContain("LLM 必须把");
+    // upload 不应被调用
+    expect(uploadAndReplyBotWsMediaMock).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });

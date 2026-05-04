@@ -376,6 +376,12 @@ export function createBotWsReplyHandle(params: {
       // 文件。本版在 reply 路径同样接管：抽出 mediaPaths 合并到 incomingMediaUrls，让现有
       // mediaUrls handling（uploadAndReplyBotWsMedia 走 aibot_respond_msg 被动回复通道）
       // 接管发送，同时 text 替换为去掉 MEDIA: 行的残余正文。
+      // v2.8.21 ⭐ 加诊断 log（让 gateway.log 能看到 parser 触发情况，区分三态：
+      //   ① LLM 没 emit MEDIA: → 沉默
+      //   ② emit 了且抽出 → "MEDIA directive(s) detected via reply.deliver"
+      //   ③ 文本里有 "MEDIA:" 子串但行级匹配未命中（嵌入正文中部 / 引号 / 列表项里）→ warn
+      // 之前 v2.8.20 没加任何 log，gateway.log 看不到 parser 是否触发，导致下游会话误判
+      // "extractMediaDirectives 从未被调用"——其实可能调了但没 mediaPath 也没 substring。
       let normalizedText = payload.text ?? "";
       const directiveMediaPaths: string[] = [];
       if (normalizedText) {
@@ -383,6 +389,16 @@ export function createBotWsReplyHandle(params: {
         if (ex.mediaPaths.length > 0) {
           normalizedText = ex.residualText;
           directiveMediaPaths.push(...ex.mediaPaths);
+          console.log(
+            `[wecom-ws] MEDIA directive(s) detected via reply.deliver (count=${ex.mediaPaths.length}, kind=${info.kind}, peer=${peerKind}:${peerId}, paths=${JSON.stringify(ex.mediaPaths)})`,
+          );
+        } else if (/MEDIA:/i.test(normalizedText)) {
+          // 补救诊断：text 里出现了 "MEDIA:" 但 parser 没抽出来——
+          // 多半是 LLM 把 MEDIA: 嵌入正文中部、或在引号/列表项里、或行首有非空白字符。
+          const sample = normalizedText.match(/[^\n]*MEDIA:[^\n]*/i)?.[0]?.slice(0, 200) ?? "(unknown)";
+          console.warn(
+            `[wecom-ws] MEDIA: substring present but no directive line matched (kind=${info.kind}, peer=${peerKind}:${peerId}, sample=${JSON.stringify(sample)}). LLM 必须把 'MEDIA: <path>' 单独成行，前后不要有正文/列表/引号/emoji。`,
+          );
         }
       }
 

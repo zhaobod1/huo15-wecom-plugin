@@ -1,7 +1,7 @@
 ---
 name: huo15-wecom
-description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.20 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.20 修 v2.8.19 路径不全：群聊 @机器人触发的 in-context reply 走 bot-ws/reply 不走 outbound.sendText，所以 v2.8.19 装上后群里仍收不到 zip。本版在 reply.ts deliver 入口同样接管 MEDIA: 字面量，复用 extractMediaDirectives 抽出 mediaPaths 合并到 incomingMediaUrls，让 uploadAndReplyBotWsMedia 走 aibot_respond_msg 通道发文件。继承 v2.8.19 outbound 路径、v2.8.18 ClawHub plugin tag、v2.8.17 长任务结果回流 + progressMode、v2.8.16 share 兜底。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
-version: 2.8.20
+description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.21 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.21 重点：诊断与韧性增强（reply.ts MEDIA: parser 加 detected/warn log，gateway.log 可见；media.ts errcode 详细 log 含 86008 群权限识别；GUIDANCE 加✅/❌示例对比杜绝 LLM 把 MEDIA: 嵌入正文）。继承 v2.8.20 reply.ts MEDIA: parser、v2.8.19 outbound 路径、v2.8.18 ClawHub plugin tag、v2.8.17 长任务结果回流 + progressMode。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
+version: 2.8.21
 homepage: https://cnb.cool/huo15/ai/huo15-wecom-plugin
 metadata: { "openclaw": { "emoji": "🦜", "requires": { "bins": [] } } }
 ---

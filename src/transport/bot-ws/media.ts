@@ -19,6 +19,40 @@ const VIDEO_MAX_BYTES = 10 * 1024 * 1024;
 const VOICE_MAX_BYTES = 2 * 1024 * 1024;
 const FILE_MAX_BYTES = 20 * 1024 * 1024;
 
+/**
+ * v2.8.21 ⭐ 抽 errcode/errmsg 用于诊断 log。企微 SDK 的 reject error 大概率
+ * 形如 `{ errcode: 86008, errmsg: "you has no privilege ...", ... }`，但
+ * 也可能是普通 Error。统一拍平给 log 用。
+ *
+ * 已知关键 errcode：
+ * - 86008: 群是其他 agent 创建的，本 Bot 无权访问该 chat（往非自建群发媒体常见）
+ * - 84080: appchat does not exist (群 ID 错)
+ * - 60011: no privilege to access/modify this user/party/agent
+ * - 845xx: SDK 内部错（ack timeout 等，含 reqId 失效）
+ */
+function describeWecomError(error: unknown): { errcode?: number; errmsg?: string; raw: string } {
+  if (!error || typeof error !== "object") {
+    return { raw: String(error) };
+  }
+  const obj = error as { errcode?: unknown; errmsg?: unknown; message?: unknown };
+  const errcode = typeof obj.errcode === "number" ? obj.errcode : undefined;
+  const errmsg = typeof obj.errmsg === "string" ? obj.errmsg : undefined;
+  const raw = typeof obj.message === "string"
+    ? obj.message
+    : errmsg ?? JSON.stringify(error).slice(0, 300);
+  return { errcode, errmsg, raw };
+}
+
+/**
+ * v2.8.21 — 86008 是不可重试的"群权限"错误（机器人不在该群的可发媒体白名单）。
+ * 检测到这个 errcode 时打 warn 提示用户/运维：把机器人加进群 / 改用 share-fallback 链接。
+ * 本函数仅用于 log 警示——shareFallbackOnUploadError 会接管实际兜底。
+ */
+function isAgentChatPrivilegeError(error: unknown): boolean {
+  const { errcode } = describeWecomError(error);
+  return errcode === 86008;
+}
+
 type FileSizeCheckResult = {
   finalType: WeComMediaType;
   shouldReject: boolean;
@@ -308,6 +342,9 @@ async function trySendShareFallbackOnReject(params: {
         markdown_v2: { content: fullText },
       } as unknown as Parameters<typeof params.wsClient.sendMessage>[1];
       await params.wsClient.sendMessage(targetChatId, messagePayload);
+      console.log(
+        `[wecom-ws] share-fallback 链接已发送到 ${targetChatId}（${(params.buffer.length / 1024 / 1024).toFixed(1)}MB → ${fallback.url}）`,
+      );
       return {
         ok: true,
         messageId: `wecom-share-fallback-${Date.now()}`,
@@ -317,13 +354,26 @@ async function trySendShareFallbackOnReject(params: {
         shareUrl: fallback.url,
       };
     } catch (sendErr) {
+      // v2.8.21 ⭐ 详细 errcode log。如果 sendMessage 也撞 86008（群限制），意味着
+      // sendMessage 跟 replyMedia 都被该群拒绝——只剩"把链接塞进 finalText 走 replyStream
+      // 文本回复"这一条路（reply.ts mediaNotes 拼接）。文本被动回复权限模型不同，能 work。
+      const { errcode, errmsg, raw } = describeWecomError(sendErr);
+      if (isAgentChatPrivilegeError(sendErr)) {
+        console.warn(
+          `[wecom-ws] share-fallback sendMessage 也撞 86008 群权限 (chatId=${targetChatId}, errmsg=${errmsg ?? raw})。降级把链接塞进 finalText，由 reply.ts replyStream 文本回复发出。`,
+        );
+      } else {
+        console.warn(
+          `[wecom-ws] share-fallback sendMessage 失败 (chatId=${targetChatId}, errcode=${errcode ?? "n/a"}, errmsg=${errmsg ?? raw})。降级把链接塞进 finalText。`,
+        );
+      }
       // sendMessage 失败但 share 已落盘 → 把完整 URL 塞进 downgradeNote，由 reply.ts 拼到最终回复
       return {
         ok: true,
         messageId: `wecom-share-fallback-${Date.now()}`,
         finalType: params.finalType,
         downgraded: true,
-        downgradeNote: `${fullText}\n\n（自动 sendMessage 失败：${(sendErr as Error).message}）`,
+        downgradeNote: `${fullText}\n\n（自动 sendMessage 失败：${errmsg ?? raw}）`,
         shareUrl: fallback.url,
       };
     }
@@ -482,6 +532,17 @@ export async function uploadAndReplyBotWsMedia(params: {
       downgradeNote: sizeCheck.downgradeNote,
     };
   } catch (error) {
+    // v2.8.21 ⭐ 详细 errcode log，便于诊断（特别 86008 群权限）
+    const { errcode, errmsg, raw } = describeWecomError(error);
+    if (isAgentChatPrivilegeError(error)) {
+      console.warn(
+        `[wecom-ws] uploadAndReplyBotWsMedia 86008 群权限错误：当前机器人不是该群的"创建/可发媒体"应用 (file=${media?.fileName ?? "?"} type=${sizeCheck?.finalType ?? "?"} errmsg=${errmsg ?? raw})。自动走 share-fallback 链接发送。`,
+      );
+    } else {
+      console.warn(
+        `[wecom-ws] uploadAndReplyBotWsMedia 失败 (file=${media?.fileName ?? "?"} type=${sizeCheck?.finalType ?? "?"} errcode=${errcode ?? "n/a"} errmsg=${errmsg ?? raw})`,
+      );
+    }
     if (media && sizeCheck) {
       return await shareFallbackOnUploadError({
         wsClient: params.wsClient,
