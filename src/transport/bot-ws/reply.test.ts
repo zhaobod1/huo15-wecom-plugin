@@ -606,4 +606,98 @@ describe("createBotWsReplyHandle", () => {
       expect(call[2]).toBe("Custom 等等...");
     }
   });
+
+  // ── v2.8.20 — MEDIA: 指令在 reply 路径接管（修群里发 zip 失败事故的真根因）─────
+  it("v2.8.20: extracts MEDIA: directive from final text and triggers media upload via reply channel", async () => {
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-media-directive" },
+        body: { from: { userid: "ZhaoBo" }, chattype: "single" },
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    // LLM 模拟输出：含 MEDIA: 单行指令 + 普通正文
+    await handle.deliver(
+      {
+        text: "📎\n\nMEDIA: /tmp/zhaobo-test.zip",
+        isReasoning: false,
+      },
+      { kind: "final" },
+    );
+
+    // uploadAndReplyBotWsMedia 被调用（reply 路径绑 reqId 走 aibot_respond_msg）
+    expect(uploadAndReplyBotWsMediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frame: expect.objectContaining({ headers: { req_id: "req-media-directive" } }),
+        mediaUrl: "/tmp/zhaobo-test.zip",
+      }),
+    );
+    // 残余文本（"📎"）走 replyStream 作为 final
+    expect(mockClient.replyStream).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: { req_id: "req-media-directive" } }),
+      expect.any(String),
+      expect.stringContaining("📎"),
+      true,
+    );
+  });
+
+  it("v2.8.20: MEDIA: directive in block payload defers media to final, accumulates correctly", async () => {
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-media-block" },
+        body: { from: { userid: "ZhaoBo" }, chattype: "single" },
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    // 第一个 block 含 MEDIA: 行
+    await handle.deliver(
+      { text: "请查收：\nMEDIA: /tmp/a.pdf", isReasoning: false },
+      { kind: "block" },
+    );
+    // 第二个 block 普通文本
+    await handle.deliver({ text: "完成", isReasoning: false }, { kind: "block" });
+    // final 不带新 text
+    await handle.deliver({ text: "", isReasoning: false }, { kind: "final" });
+
+    // media 在 final 时一起发（deferredMediaUrls 累积起作用）
+    expect(uploadAndReplyBotWsMediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaUrl: "/tmp/a.pdf",
+      }),
+    );
+  });
+
+  it("v2.8.20: multiple MEDIA: directives in one final payload all get uploaded", async () => {
+    const handle = createBotWsReplyHandle({
+      client: mockClient,
+      frame: {
+        headers: { req_id: "req-media-multi" },
+        body: { from: { userid: "ZhaoBo" }, chattype: "single" },
+      } as unknown as ReplyHandleParams["frame"],
+      accountId: "default",
+      inboundKind: "text",
+      autoSendPlaceholder: false,
+    });
+
+    await handle.deliver(
+      {
+        text: "三个文件：\nMEDIA: /tmp/1.pdf\nMEDIA: /tmp/2.zip\nMEDIA: /tmp/3.png",
+        isReasoning: false,
+      },
+      { kind: "final" },
+    );
+
+    const allMediaCalls = uploadAndReplyBotWsMediaMock.mock.calls.map(
+      (c) => (c[0] as { mediaUrl: string }).mediaUrl,
+    );
+    expect(allMediaCalls).toEqual(["/tmp/1.pdf", "/tmp/2.zip", "/tmp/3.png"]);
+  });
 });

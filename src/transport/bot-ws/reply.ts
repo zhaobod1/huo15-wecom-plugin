@@ -7,6 +7,7 @@ import {
 } from "@wecom/aibot-node-sdk";
 import { formatErrorMessage } from "openclaw/plugin-sdk/infra-runtime";
 import { resolveWecomMediaMaxBytes, resolveWecomMergedMediaLocalRoots } from "../../config/index.js";
+import { extractMediaDirectives } from "../../outbound.js";
 import { getAccountRuntime, getWecomRuntime } from "../../runtime.js";
 import type { ReplyHandle, ReplyPayload } from "../../types/index.js";
 import type { WecomProgressMode } from "../../types/config.js";
@@ -368,8 +369,28 @@ export function createBotWsReplyHandle(params: {
         return;
       }
 
-      const text = payload.text?.trim() || "";
-      const incomingMediaUrls = payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
+      // v2.8.20 ⭐ 解析 LLM emit 的 "MEDIA: <path>" 单行指令（与 outbound.sendText 同源）。
+      // index.ts 的 WECOM_BOT_WS_MEDIA_GUIDANCE 通过 system context 引导 LLM 用 MEDIA: 行
+      // 发文件，但 v2.8.19 只修了 outbound.sendText 路径——bot-ws reply.ts 是入站消息的"被动
+      // 回复"通道（reqId 绑定，群聊里 @机器人触发），用户实测群里 emit MEDIA: 仍然没收到
+      // 文件。本版在 reply 路径同样接管：抽出 mediaPaths 合并到 incomingMediaUrls，让现有
+      // mediaUrls handling（uploadAndReplyBotWsMedia 走 aibot_respond_msg 被动回复通道）
+      // 接管发送，同时 text 替换为去掉 MEDIA: 行的残余正文。
+      let normalizedText = payload.text ?? "";
+      const directiveMediaPaths: string[] = [];
+      if (normalizedText) {
+        const ex = extractMediaDirectives(normalizedText);
+        if (ex.mediaPaths.length > 0) {
+          normalizedText = ex.residualText;
+          directiveMediaPaths.push(...ex.mediaPaths);
+        }
+      }
+
+      const text = normalizedText.trim() || "";
+      const incomingMediaUrls = [
+        ...(payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : [])),
+        ...directiveMediaPaths,
+      ];
       const hasIncomingMedia = incomingMediaUrls.length > 0;
       if (info.kind !== "final" && hasIncomingMedia) {
         mergeDeferredMediaUrls(incomingMediaUrls);

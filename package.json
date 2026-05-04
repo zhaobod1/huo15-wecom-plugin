@@ -1,7 +1,7 @@
 {
   "name": "@huo15/wecom",
-  "version": "2.8.19",
-  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.19 — outbound.sendText 实装 'MEDIA: <path>' 单行指令解析（修群里发 zip 失败事故：v2.8.18 之前 system context 引导 LLM 用 MEDIA: 但 outbound 完全没解析，文件当文本发出去）。一次回复多行 MEDIA: 按顺序逐个发，单个失败不吞整批；自动展开 ~/、去成对引号、case-insensitive。GUIDANCE 文案同步加路径要求。继承 v2.8.17 长任务结果回流 + progressMode、v2.8.16 share 兜底、v2.8.14 bot-webhook long-task rescue。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
+  "version": "2.8.20",
+  "description": "OpenClaw 企业微信（WeCom）插件 v2.8.20 — bot-ws/reply.ts deliver 入口也接管 'MEDIA: <path>' 解析（v2.8.19 hotfix 路径不全：群聊 @机器人触发的 in-context reply 走 bot-ws/reply 而非 outbound.sendText，所以群里 emit MEDIA: 仍然没收到文件——本版同时在 reply 路径复用 extractMediaDirectives，把抽出的路径合并到 incomingMediaUrls 让 uploadAndReplyBotWsMedia 走 aibot_respond_msg 通道发文件）。继承 v2.8.19 outbound 路径修复、v2.8.17 长任务结果回流 + progressMode、v2.8.16 share 兜底。默认 Bot WebSocket，支持加密媒体解密、Agent 主动发消息、微信客服接入与多账号切换。",
   "license": "ISC",
   "author": "YanHaidao (VX: YanHaidao)",
   "repository": {
