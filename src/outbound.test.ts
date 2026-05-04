@@ -1,5 +1,7 @@
+import { homedir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BotWsPushHandle } from "./app/index.js";
+import { extractMediaDirectives } from "./outbound.js";
 
 vi.mock("./transport/agent-api/core.js", () => ({
   sendText: vi.fn(),
@@ -1267,5 +1269,81 @@ describe("wecomOutbound", () => {
         text: "hello",
       } as any),
     ).rejects.toThrow(/duplicate wecom agent identity/i);
+  });
+});
+
+// ── v2.8.19 — MEDIA: 字面量解析（修群里发 zip 失败事故）─────────────────────
+describe("extractMediaDirectives", () => {
+  it("returns empty when text is null/undefined/empty", () => {
+    expect(extractMediaDirectives(null)).toEqual({ residualText: "", mediaPaths: [] });
+    expect(extractMediaDirectives(undefined)).toEqual({ residualText: "", mediaPaths: [] });
+    expect(extractMediaDirectives("")).toEqual({ residualText: "", mediaPaths: [] });
+  });
+
+  it("returns text unchanged when no MEDIA: directive", () => {
+    const r = extractMediaDirectives("hello world\nfoo bar");
+    expect(r).toEqual({ residualText: "hello world\nfoo bar", mediaPaths: [] });
+  });
+
+  it("extracts single absolute MEDIA: line and removes it from residualText", () => {
+    const r = extractMediaDirectives("结果：\nMEDIA: /tmp/foo.zip\n请查收");
+    expect(r.mediaPaths).toEqual(["/tmp/foo.zip"]);
+    expect(r.residualText).toBe("结果：\n请查收");
+  });
+
+  it("expands ~/ to user home dir", () => {
+    const r = extractMediaDirectives("MEDIA: ~/Downloads/report.pdf");
+    expect(r.mediaPaths).toEqual([`${homedir()}/Downloads/report.pdf`]);
+    expect(r.residualText).toBe("");
+  });
+
+  it("strips paired quotes around path", () => {
+    const dq = extractMediaDirectives('MEDIA: "/tmp/has space.zip"');
+    expect(dq.mediaPaths).toEqual(["/tmp/has space.zip"]);
+    const sq = extractMediaDirectives("MEDIA: '/tmp/foo.pdf'");
+    expect(sq.mediaPaths).toEqual(["/tmp/foo.pdf"]);
+  });
+
+  it("is case-insensitive on the MEDIA prefix", () => {
+    expect(extractMediaDirectives("media: /tmp/a.png").mediaPaths).toEqual(["/tmp/a.png"]);
+    expect(extractMediaDirectives("Media: /tmp/b.png").mediaPaths).toEqual(["/tmp/b.png"]);
+    expect(extractMediaDirectives("MEDIA: /tmp/c.png").mediaPaths).toEqual(["/tmp/c.png"]);
+  });
+
+  it("collects multiple MEDIA: lines in order, preserves rest", () => {
+    const txt = [
+      "三个文件如下：",
+      "MEDIA: /tmp/1.zip",
+      "中间有说明",
+      "MEDIA: ~/2.pdf",
+      "MEDIA: /tmp/3.png",
+      "末尾备注",
+    ].join("\n");
+    const r = extractMediaDirectives(txt);
+    expect(r.mediaPaths).toEqual([
+      "/tmp/1.zip",
+      `${homedir()}/2.pdf`,
+      "/tmp/3.png",
+    ]);
+    expect(r.residualText).toBe("三个文件如下：\n中间有说明\n末尾备注");
+  });
+
+  it("ignores MEDIA: when not on its own line (in-line text safe)", () => {
+    // 'MEDIA:' 出现在普通文本中部不应被抽走，避免误伤
+    const r = extractMediaDirectives("说明：参数 MEDIA: foo 是干啥的？");
+    expect(r.mediaPaths).toEqual([]);
+    expect(r.residualText).toBe("说明：参数 MEDIA: foo 是干啥的？");
+  });
+
+  it("tolerates leading/trailing spaces around the directive line", () => {
+    const r = extractMediaDirectives("   MEDIA:   /tmp/a.png   ");
+    expect(r.mediaPaths).toEqual(["/tmp/a.png"]);
+  });
+
+  it("skips empty path after MEDIA:", () => {
+    const r = extractMediaDirectives("MEDIA:   \n正文");
+    expect(r.mediaPaths).toEqual([]);
+    // 空 MEDIA: 行也算被过滤掉
+    expect(r.residualText).toBe("正文");
   });
 });

@@ -1,7 +1,7 @@
 ---
 name: huo15-wecom
-description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.18 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.18 chore：注册 ClawHub plugin tag 让 `openclaw plugins install @huo15/wecom` 不带版本号也能装。继承 v2.8.17 长任务结果回流（846605/846608 错码降级 sendMessage+Agent API）+ progressMode、v2.8.16 share 兜底、v2.8.8 WS BOT 图片三件套修复。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
-version: 2.8.18
+description: "火一五·企业微信（WeCom）OpenClaw 插件 v2.8.19 — 默认走 Bot WebSocket（响应快、配置简单），自带加密媒体解密 / Agent 主动发消息 / 微信客服三通道接入 / 多账号切换。v2.8.19 重点：outbound.sendText 实装 'MEDIA: <path>' 单行指令解析（修群里发 zip 失败事故 — v2.8.18 之前 LLM 按 GUIDANCE emit 但 outbound 没解析、文件当文本发出去）。多行 MEDIA: 按序逐个发、单个失败不吞整批、自动展开 ~/、去引号、case-insensitive。继承 v2.8.18 ClawHub plugin tag、v2.8.17 长任务结果回流 + progressMode、v2.8.16 share 兜底、v2.8.8 WS BOT 图片三件套修复。Use when: 接企业微信、给企微 Bot/自建应用接 OpenClaw、用微信客服收外部用户消息、需要图片/文件双向、跨账号切换。Do NOT use for 个人微信（不同协议）。"
+version: 2.8.19
 homepage: https://cnb.cool/huo15/ai/huo15-wecom-plugin
 metadata: { "openclaw": { "emoji": "🦜", "requires": { "bins": [] } } }
 ---
